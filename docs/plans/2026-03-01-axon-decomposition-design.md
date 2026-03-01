@@ -4,6 +4,10 @@
 
 axon-chat is a single Go module containing tool definitions, a conversation loop, HTTP handlers, SSE streaming, persistence interfaces, and an embedded SvelteKit frontend. We're preparing it for open source by decomposing it into three modules with one-way dependencies.
 
+## Why Go
+
+Go is the foundation language because it avoids supply chain risk. A Go binary compiles to a single static executable with no runtime dependencies — no node_modules, no pip packages, no shared libraries to audit or update. The dependency tree is small, auditable, and pinned by `go.sum`. This matters for a project designed to run on personal infrastructure where trust and simplicity are paramount.
+
 ## Goals
 
 1. **axon-tool** — standalone tool framework usable without an agent or chat UI
