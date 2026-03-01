@@ -7,13 +7,13 @@ axon-chat is a single Go module containing tool definitions, a conversation loop
 ## Why Go
 
 - **Supply chain safety** — a Go binary compiles to a single static executable. No node_modules, no pip packages, no shared libraries to audit or update. The dependency tree is small, auditable, and pinned by `go.sum`.
-- **Strong type system** — catches errors at compile time, not at runtime in production.
+- **Sufficient, honest type system** — catches errors at compile time, not at runtime in production. Go's type system is deliberately simpler than Rust's or Haskell's — no sum types, generics only recently added. That simplicity is a feature: it keeps the language readable and predictable. Not strong in the PL-theory sense, but sufficient and honest about what it checks.
 - **Small, capable stdlib** — HTTP servers, JSON, crypto, concurrency — all built in, no third-party framework required.
 - **Easy for humans to reason about** — explicit control flow, no hidden magic, one obvious way to do things.
-- **Easy for agents to reason about** — the same properties that help humans help AI coding agents. Go's explicitness and consistency make it a strong target for agent-assisted development.
-- **Efficient for compute** — compiled, low memory overhead, excellent concurrency primitives. When compute becomes a tradeable commodity, efficiency matters.
+- **Easy for agents to reason about** — the same properties that help humans help AI coding agents. No metaprogramming, no decorators, no inheritance hierarchies, one way to do most things. LLMs generate correct Go more reliably than languages with lots of implicit behaviour. This advantage compounds as agent-assisted development becomes the norm.
+- **Efficient for compute** — compiled, low memory overhead, excellent concurrency primitives. Not Rust-level efficient, but in a fundamentally different category than Python or Ruby. When compute becomes a tradeable commodity, the economics shift toward languages where you get more work per watt.
 - **Build speed and iteration speed** — fast compilation means tight feedback loops. Correctness is enforced both syntactically and semantically by the compiler.
-- **Interpreters are a liability** — expressive languages that run on interpreters carry runtime overhead, supply chain risk, and deployment complexity. As compute becomes a commodity, the economics favour compiled languages with minimal runtime dependencies.
+- **Interpreters are a liability** — for infrastructure, services, and tools that ship as software, the deployment story for a single binary vs managing runtimes, virtualenvs, and dependency trees is just better. Python has a moat in ML/data science because of NumPy, PyTorch, and the surrounding libraries, and scripting languages still have a role for throwaway automation. But for software you intend to run and maintain, the economics favour compiled languages with minimal runtime dependencies.
 
 ## Goals
 
