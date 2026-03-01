@@ -6,7 +6,14 @@ axon-chat is a single Go module containing tool definitions, a conversation loop
 
 ## Why Go
 
-Go is the foundation language because it avoids supply chain risk. A Go binary compiles to a single static executable with no runtime dependencies — no node_modules, no pip packages, no shared libraries to audit or update. The dependency tree is small, auditable, and pinned by `go.sum`. This matters for a project designed to run on personal infrastructure where trust and simplicity are paramount.
+- **Supply chain safety** — a Go binary compiles to a single static executable. No node_modules, no pip packages, no shared libraries to audit or update. The dependency tree is small, auditable, and pinned by `go.sum`.
+- **Strong type system** — catches errors at compile time, not at runtime in production.
+- **Small, capable stdlib** — HTTP servers, JSON, crypto, concurrency — all built in, no third-party framework required.
+- **Easy for humans to reason about** — explicit control flow, no hidden magic, one obvious way to do things.
+- **Easy for agents to reason about** — the same properties that help humans help AI coding agents. Go's explicitness and consistency make it a strong target for agent-assisted development.
+- **Efficient for compute** — compiled, low memory overhead, excellent concurrency primitives. When compute becomes a tradeable commodity, efficiency matters.
+- **Build speed and iteration speed** — fast compilation means tight feedback loops. Correctness is enforced both syntactically and semantically by the compiler.
+- **Interpreters are a liability** — expressive languages that run on interpreters carry runtime overhead, supply chain risk, and deployment complexity. As compute becomes a commodity, the economics favour compiled languages with minimal runtime dependencies.
 
 ## Goals
 
