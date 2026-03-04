@@ -1,0 +1,38 @@
+name: smoke test
+scenarios:
+  - name: greeting
+    message: "Hello, how are you?"
+    ideal_response: "A warm, friendly greeting that acknowledges the user and offers help."
+    max_duration_ms: 5000
+    tools:
+      expect: []
+      reject: []
+    rubric:
+      - type: min_length
+        value: 20
+      - type: llm_judge
+        criterion: "Response is warm and conversational in tone"
+
+  - name: current time
+    message: "What time is it?"
+    ideal_response: "A response that uses the current_time tool and states the current time."
+    max_duration_ms: 5000
+    tools:
+      expect: [current_time]
+      reject: []
+    rubric:
+      - type: llm_judge
+        criterion: "Response includes a specific time"
+
+  - name: weather check
+    message: "What's the weather in Melbourne?"
+    ideal_response: "A response that uses the check_weather tool and reports current conditions in Melbourne with temperature."
+    max_duration_ms: 10000
+    tools:
+      expect: [check_weather]
+      reject: []
+    rubric:
+      - type: contains
+        value: "Melbourne"
+      - type: llm_judge
+        criterion: "Response includes specific weather details like temperature"

@@ -1,0 +1,57 @@
+name: response quality eval
+scenarios:
+  - name: factual question
+    message: "What is the capital of Australia?"
+    ideal_response: "A clear, correct answer stating Canberra is the capital of Australia."
+    max_duration_ms: 5000
+    tools:
+      expect: []
+      reject: []
+    rubric:
+      - type: contains
+        value: "Canberra"
+      - type: not_contains
+        value: "Sydney"
+      - type: llm_judge
+        criterion: "Response is factually correct and does not confuse Canberra with Sydney or Melbourne"
+
+  - name: web search
+    message: "Search the web for the latest Go release version"
+    ideal_response: "A response that uses web_search to find and report the latest Go release version number."
+    max_duration_ms: 15000
+    tools:
+      expect: [web_search]
+      reject: []
+    rubric:
+      - type: min_length
+        value: 30
+      - type: llm_judge
+        criterion: "Response mentions a specific Go version number"
+
+  - name: multi-tool avoidance
+    message: "What is 2 + 2?"
+    ideal_response: "A direct answer without using any tools — simple arithmetic doesn't need tools."
+    max_duration_ms: 5000
+    tools:
+      expect: []
+      reject: [web_search, check_weather]
+    rubric:
+      - type: contains
+        value: "4"
+      - type: max_length
+        value: 500
+      - type: llm_judge
+        criterion: "Response answers directly without unnecessary elaboration"
+
+  - name: memory recall
+    message: "What do you remember about me?"
+    ideal_response: "A response that uses recall_memory and either shares what it finds or gracefully handles having no memories."
+    max_duration_ms: 10000
+    tools:
+      expect: [recall_memory]
+      reject: []
+    rubric:
+      - type: min_length
+        value: 20
+      - type: llm_judge
+        criterion: "Response acknowledges the memory system and either shares memories or explains it has none yet"
