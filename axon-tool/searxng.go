@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
+
+const searxngMaxBody = 1 << 20 // 1MB
 
 // SearXNGClient talks to a SearXNG instance.
 type SearXNGClient struct {
@@ -37,7 +41,7 @@ type searxngResponse struct {
 
 // Search queries SearXNG and returns the top N results.
 func (c *SearXNGClient) Search(ctx context.Context, query string, limit int) ([]SearchResult, error) {
-	u, err := url.Parse(c.baseURL + "/search")
+	u, err := url.Parse(strings.TrimRight(c.baseURL, "/") + "/search")
 	if err != nil {
 		return nil, fmt.Errorf("parse URL: %w", err)
 	}
@@ -63,7 +67,7 @@ func (c *SearXNGClient) Search(ctx context.Context, query string, limit int) ([]
 	}
 
 	var sr searxngResponse
-	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, searxngMaxBody)).Decode(&sr); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 

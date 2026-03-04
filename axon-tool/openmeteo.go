@@ -4,17 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
 
+const openMeteoMaxBody = 1 << 20 // 1MB
+
 // OpenMeteoClient uses Open-Meteo's free geocoding + weather APIs.
 type OpenMeteoClient struct {
 	httpClient *http.Client
 	geocodeURL string
 	weatherURL string
+	nowFunc    func() time.Time // for testing; defaults to time.Now
 }
 
 // NewOpenMeteoClient creates a weather client using Open-Meteo.
@@ -92,6 +96,7 @@ type weatherAPIResponse struct {
 		IsDay         int     `json:"is_day"`
 	} `json:"current_weather"`
 	Hourly struct {
+		Time             []string  `json:"time"`
 		RelativeHumidity []int     `json:"relative_humidity_2m"`
 		ApparentTemp     []float64 `json:"apparent_temperature"`
 	} `json:"hourly"`
@@ -129,7 +134,7 @@ func (c *OpenMeteoClient) GetWeather(ctx context.Context, location string) (*Wea
 	}
 
 	var geo geocodeResponse
-	if err := json.NewDecoder(geoResp.Body).Decode(&geo); err != nil {
+	if err := json.NewDecoder(io.LimitReader(geoResp.Body, openMeteoMaxBody)).Decode(&geo); err != nil {
 		return nil, fmt.Errorf("decode geocode: %w", err)
 	}
 
@@ -168,7 +173,7 @@ func (c *OpenMeteoClient) GetWeather(ctx context.Context, location string) (*Wea
 	}
 
 	var wx weatherAPIResponse
-	if err := json.NewDecoder(wxResp.Body).Decode(&wx); err != nil {
+	if err := json.NewDecoder(io.LimitReader(wxResp.Body, openMeteoMaxBody)).Decode(&wx); err != nil {
 		return nil, fmt.Errorf("decode weather: %w", err)
 	}
 
@@ -181,14 +186,16 @@ func (c *OpenMeteoClient) GetWeather(ctx context.Context, location string) (*Wea
 		displayLoc += ", " + loc.Country
 	}
 
-	// Get current hour's humidity and feels-like (index 0 = current hour approx)
+	// Find the current hour index from the hourly time array.
+	hourIdx := currentHourIndex(wx.Hourly.Time, c.now())
+
 	humidity := 0
-	if len(wx.Hourly.RelativeHumidity) > 0 {
-		humidity = wx.Hourly.RelativeHumidity[0]
+	if hourIdx < len(wx.Hourly.RelativeHumidity) {
+		humidity = wx.Hourly.RelativeHumidity[hourIdx]
 	}
 	feelsLike := wx.CurrentWeather.Temperature
-	if len(wx.Hourly.ApparentTemp) > 0 {
-		feelsLike = wx.Hourly.ApparentTemp[0]
+	if hourIdx < len(wx.Hourly.ApparentTemp) {
+		feelsLike = wx.Hourly.ApparentTemp[hourIdx]
 	}
 
 	return &WeatherResult{
@@ -200,6 +207,32 @@ func (c *OpenMeteoClient) GetWeather(ctx context.Context, location string) (*Wea
 		WindSpeed:   wx.CurrentWeather.WindSpeed,
 		IsDay:       wx.CurrentWeather.IsDay == 1,
 	}, nil
+}
+
+// now returns the current time, using nowFunc if set (for testing).
+func (c *OpenMeteoClient) now() time.Time {
+	if c.nowFunc != nil {
+		return c.nowFunc()
+	}
+	return time.Now()
+}
+
+// currentHourIndex finds the index in the hourly time array that best matches
+// the current time. Open-Meteo returns times as "2006-01-02T15:04" strings.
+// Falls back to 0 if parsing fails or no match is found.
+func currentHourIndex(hourlyTimes []string, now time.Time) int {
+	nowTrunc := now.Truncate(time.Hour)
+	for i, ts := range hourlyTimes {
+		t, err := time.Parse("2006-01-02T15:04", ts)
+		if err != nil {
+			continue
+		}
+		if !t.Before(nowTrunc) {
+			return i
+		}
+	}
+	// If we didn't find a match, fall back to index 0.
+	return 0
 }
 
 // weatherCodeToDescription maps WMO weather codes to human-readable descriptions.

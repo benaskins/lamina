@@ -104,6 +104,27 @@ func TestSearXNGClient_QueryParams(t *testing.T) {
 	}
 }
 
+func TestSearXNGClient_TrailingSlashInBaseURL(t *testing.T) {
+	var receivedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(searxngResponse{})
+	}))
+	defer srv.Close()
+
+	// Base URL with trailing slash should not produce double-slash.
+	client := NewSearXNGClient(srv.URL + "/")
+	_, err := client.Search(context.Background(), "test", 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if receivedPath != "/search" {
+		t.Errorf("got path %q, want %q (no double slash)", receivedPath, "/search")
+	}
+}
+
 func TestSearXNGClient_ImplementsSearcher(t *testing.T) {
 	var _ Searcher = (*SearXNGClient)(nil)
 }

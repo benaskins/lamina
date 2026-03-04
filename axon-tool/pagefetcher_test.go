@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 const testHTML = `<!DOCTYPE html>
@@ -150,5 +151,56 @@ func TestPageFetcher_InvalidURL(t *testing.T) {
 	_, err := pf.FetchAndExtract(context.Background(), "ftp://example.com", "question")
 	if err == nil {
 		t.Fatal("expected error for unsupported scheme")
+	}
+}
+
+func TestPageFetcher_ConcurrentAccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, testHTML)
+	}))
+	defer srv.Close()
+
+	pf := NewPageFetcher(nil)
+
+	// Run concurrent fetches to exercise the mutex on lastFetch.
+	errs := make(chan error, 3)
+	for i := 0; i < 3; i++ {
+		go func() {
+			_, err := pf.FetchAndExtract(context.Background(), srv.URL, "test")
+			errs <- err
+		}()
+	}
+	for i := 0; i < 3; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent fetch %d failed: %v", i, err)
+		}
+	}
+}
+
+func TestTruncateRuneSafe(t *testing.T) {
+	// Build a string with multi-byte UTF-8 characters.
+	// Each CJK character "世" is 3 bytes. Repeat enough to exceed a small limit.
+	input := strings.Repeat("\u4e16\u754c", 100) // "世界" repeated = 600 bytes
+
+	// Simulate the truncation logic from FetchAndExtract.
+	maxLen := 50
+	text := input
+	if len(text) > maxLen {
+		text = text[:maxLen]
+		for len(text) > 0 && !utf8.ValidString(text) {
+			text = text[:len(text)-1]
+		}
+	}
+
+	if !utf8.ValidString(text) {
+		t.Errorf("truncated text is not valid UTF-8")
+	}
+	if len(text) > maxLen {
+		t.Errorf("truncated text exceeds maxLen: %d > %d", len(text), maxLen)
+	}
+	// 50 / 3 = 16 full 3-byte chars = 48 bytes
+	if len(text) != 48 {
+		t.Errorf("expected 48 bytes after rune-safe truncation, got %d", len(text))
 	}
 }

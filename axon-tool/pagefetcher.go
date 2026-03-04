@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	readability "github.com/go-shiori/go-readability"
 )
@@ -25,6 +27,7 @@ const (
 type PageFetcher struct {
 	client    *http.Client
 	generate  TextGenerator
+	mu        sync.Mutex
 	lastFetch time.Time
 }
 
@@ -43,13 +46,17 @@ func NewPageFetcher(generate TextGenerator) *PageFetcher {
 // uses a TextGenerator to pull out the parts relevant to the given question.
 func (f *PageFetcher) FetchAndExtract(ctx context.Context, rawURL, question string) (string, error) {
 	// Rate limit: wait between fetches
+	f.mu.Lock()
 	if !f.lastFetch.IsZero() {
 		elapsed := time.Since(f.lastFetch)
 		if elapsed < fetchDelayBetween {
+			f.mu.Unlock()
 			time.Sleep(fetchDelayBetween - elapsed)
+			f.mu.Lock()
 		}
 	}
 	f.lastFetch = time.Now()
+	f.mu.Unlock()
 
 	// Fetch
 	body, err := f.fetchPage(ctx, rawURL)
@@ -67,9 +74,13 @@ func (f *PageFetcher) FetchAndExtract(ctx context.Context, rawURL, question stri
 		return "", fmt.Errorf("could not extract readable content from this page")
 	}
 
-	// Truncate for LLM context
+	// Truncate for LLM context (rune-safe to avoid splitting multi-byte characters)
 	if len(text) > extractionMaxLen {
 		text = text[:extractionMaxLen]
+		// Walk back to the last valid UTF-8 boundary.
+		for len(text) > 0 && !utf8.Valid([]byte(text)) {
+			text = text[:len(text)-1]
+		}
 	}
 
 	// LLM extraction

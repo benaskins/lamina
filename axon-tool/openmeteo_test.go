@@ -3,10 +3,12 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpenMeteoClient_ParsesWeatherResponse(t *testing.T) {
@@ -27,6 +29,7 @@ func TestOpenMeteoClient_ParsesWeatherResponse(t *testing.T) {
 		resp.CurrentWeather.WindDirection = 180
 		resp.CurrentWeather.WeatherCode = 0
 		resp.CurrentWeather.IsDay = 1
+		resp.Hourly.Time = []string{"2025-01-15T00:00"}
 		resp.Hourly.RelativeHumidity = []int{65}
 		resp.Hourly.ApparentTemp = []float64{21.0}
 		w.Header().Set("Content-Type", "application/json")
@@ -36,10 +39,13 @@ func TestOpenMeteoClient_ParsesWeatherResponse(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
+	// Set nowFunc to midnight so index 0 is the correct hour
+	fixedNow := time.Date(2025, 1, 15, 0, 30, 0, 0, time.UTC)
 	client := &OpenMeteoClient{
 		httpClient: srv.Client(),
 		geocodeURL: srv.URL + "/v1/search",
 		weatherURL: srv.URL + "/v1/forecast",
+		nowFunc:    func() time.Time { return fixedNow },
 	}
 
 	result, err := client.GetWeather(context.Background(), "Melbourne")
@@ -226,6 +232,105 @@ func TestWeatherCodeToDescription(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("weatherCodeToDescription(%d) = %q, want %q", tt.code, got, tt.want)
 		}
+	}
+}
+
+func TestCurrentHourIndex(t *testing.T) {
+	hourlyTimes := []string{
+		"2025-01-15T00:00",
+		"2025-01-15T01:00",
+		"2025-01-15T02:00",
+		"2025-01-15T03:00",
+		"2025-01-15T14:00",
+		"2025-01-15T15:00",
+		"2025-01-15T23:00",
+	}
+
+	tests := []struct {
+		name    string
+		now     time.Time
+		wantIdx int
+	}{
+		{"midnight", time.Date(2025, 1, 15, 0, 15, 0, 0, time.UTC), 0},
+		{"1am", time.Date(2025, 1, 15, 1, 45, 0, 0, time.UTC), 1},
+		{"2:30am", time.Date(2025, 1, 15, 2, 30, 0, 0, time.UTC), 2},
+		{"3pm (14:xx)", time.Date(2025, 1, 15, 14, 5, 0, 0, time.UTC), 4},
+		{"11pm", time.Date(2025, 1, 15, 23, 0, 0, 0, time.UTC), 6},
+		{"before all times", time.Date(2025, 1, 14, 23, 0, 0, 0, time.UTC), 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idx := currentHourIndex(hourlyTimes, tt.now)
+			if idx != tt.wantIdx {
+				t.Errorf("currentHourIndex() = %d, want %d", idx, tt.wantIdx)
+			}
+		})
+	}
+}
+
+func TestCurrentHourIndex_EmptyTimes(t *testing.T) {
+	idx := currentHourIndex(nil, time.Now())
+	if idx != 0 {
+		t.Errorf("expected 0 for empty times, got %d", idx)
+	}
+}
+
+func TestOpenMeteoClient_SelectsCorrectHourlyIndex(t *testing.T) {
+	// Provide 24 hours of hourly data; set nowFunc to 14:30 so index 14 should be used.
+	hourlyTimes := make([]string, 24)
+	humidity := make([]int, 24)
+	apparent := make([]float64, 24)
+	for h := 0; h < 24; h++ {
+		hourlyTimes[h] = fmt.Sprintf("2025-06-01T%02d:00", h)
+		humidity[h] = 40 + h    // 40, 41, ... 63
+		apparent[h] = 18.0 + float64(h)*0.5
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/search", func(w http.ResponseWriter, r *http.Request) {
+		resp := geocodeResponse{
+			Results: []geoResult{
+				{Name: "Sydney", Country: "Australia", Latitude: -33.87, Longitude: 151.21},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	})
+	mux.HandleFunc("/v1/forecast", func(w http.ResponseWriter, r *http.Request) {
+		resp := weatherAPIResponse{}
+		resp.CurrentWeather.Temperature = 25.0
+		resp.CurrentWeather.WeatherCode = 1
+		resp.CurrentWeather.IsDay = 1
+		resp.Hourly.Time = hourlyTimes
+		resp.Hourly.RelativeHumidity = humidity
+		resp.Hourly.ApparentTemp = apparent
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	fixedNow := time.Date(2025, 6, 1, 14, 30, 0, 0, time.UTC)
+	client := &OpenMeteoClient{
+		httpClient: srv.Client(),
+		geocodeURL: srv.URL + "/v1/search",
+		weatherURL: srv.URL + "/v1/forecast",
+		nowFunc:    func() time.Time { return fixedNow },
+	}
+
+	result, err := client.GetWeather(context.Background(), "Sydney")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Index 14: humidity = 40+14 = 54, apparent = 18.0 + 14*0.5 = 25.0
+	if result.Humidity != 54 {
+		t.Errorf("got humidity %d, want 54 (hour 14)", result.Humidity)
+	}
+	if result.FeelsLike != 25.0 {
+		t.Errorf("got feels_like %f, want 25.0 (hour 14)", result.FeelsLike)
 	}
 }
 
