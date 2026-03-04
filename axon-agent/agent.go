@@ -25,12 +25,13 @@ type ToolCall struct {
 
 // ChatRequest is a provider-agnostic request to an LLM.
 type ChatRequest struct {
-	Model    string
-	Messages []Message
-	Tools    []tool.ToolDef
-	Stream   bool
-	Think    *bool
-	Options  map[string]any
+	Model         string
+	Messages      []Message
+	Tools         []tool.ToolDef
+	Stream        bool
+	Think         *bool
+	Options       map[string]any
+	MaxIterations int // Maximum tool-call loop iterations. Defaults to 20 if 0.
 }
 
 // ChatResponse is a provider-agnostic streamed response chunk from an LLM.

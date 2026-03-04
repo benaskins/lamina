@@ -2,6 +2,8 @@ package agent_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	agent "github.com/benaskins/axon-agent"
@@ -195,6 +197,111 @@ func (s *spyClient) Chat(ctx context.Context, req *agent.ChatRequest, fn func(ag
 		}
 	}
 	return nil
+}
+
+func TestRunMaxIterationsExceeded(t *testing.T) {
+	// Client that always returns a tool call, forcing infinite loop
+	client := &alwaysToolCallClient{}
+
+	tools := map[string]tool.ToolDef{
+		"noop": {
+			Name: "noop",
+			Execute: func(ctx *tool.ToolContext, args map[string]any) tool.ToolResult {
+				return tool.ToolResult{Content: "ok"}
+			},
+		},
+	}
+
+	_, err := agent.Run(context.Background(), client, &agent.ChatRequest{
+		Model:         "test",
+		Messages:      []agent.Message{{Role: "user", Content: "loop"}},
+		MaxIterations: 3,
+	}, tools, &tool.ToolContext{Ctx: context.Background()}, agent.Callbacks{})
+
+	if err == nil {
+		t.Fatal("expected error for max iterations exceeded, got nil")
+	}
+	if !strings.Contains(err.Error(), "max iterations") {
+		t.Errorf("error = %q, want it to contain 'max iterations'", err.Error())
+	}
+}
+
+func TestRunUnknownToolCall(t *testing.T) {
+	client := &multiTurnClient{
+		turns: [][]agent.ChatResponse{
+			// First turn: model calls a tool that doesn't exist
+			{
+				{
+					ToolCalls: []agent.ToolCall{
+						{Name: "nonexistent_tool", Arguments: map[string]any{}},
+					},
+					Done: true,
+				},
+			},
+			// Second turn: model responds with final answer
+			{
+				{Content: "Sorry about that.", Done: true},
+			},
+		},
+	}
+
+	tools := map[string]tool.ToolDef{
+		"real_tool": {
+			Name: "real_tool",
+			Execute: func(ctx *tool.ToolContext, args map[string]any) tool.ToolResult {
+				return tool.ToolResult{Content: "ok"}
+			},
+		},
+	}
+
+	result, err := agent.Run(context.Background(), client, &agent.ChatRequest{
+		Model:    "test",
+		Messages: []agent.Message{{Role: "user", Content: "call something"}},
+	}, tools, &tool.ToolContext{Ctx: context.Background()}, agent.Callbacks{})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Content != "Sorry about that." {
+		t.Errorf("Content = %q, want %q", result.Content, "Sorry about that.")
+	}
+}
+
+func TestRunChatClientError(t *testing.T) {
+	client := &errorClient{err: fmt.Errorf("connection refused")}
+
+	_, err := agent.Run(context.Background(), client, &agent.ChatRequest{
+		Model:    "test",
+		Messages: []agent.Message{{Role: "user", Content: "Hi"}},
+	}, nil, nil, agent.Callbacks{})
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Errorf("error = %q, want it to contain 'connection refused'", err.Error())
+	}
+}
+
+// alwaysToolCallClient always returns a tool call on every Chat invocation.
+type alwaysToolCallClient struct{}
+
+func (a *alwaysToolCallClient) Chat(ctx context.Context, req *agent.ChatRequest, fn func(agent.ChatResponse) error) error {
+	return fn(agent.ChatResponse{
+		ToolCalls: []agent.ToolCall{
+			{Name: "noop", Arguments: map[string]any{}},
+		},
+		Done: true,
+	})
+}
+
+// errorClient always returns an error.
+type errorClient struct {
+	err error
+}
+
+func (e *errorClient) Chat(ctx context.Context, req *agent.ChatRequest, fn func(agent.ChatResponse) error) error {
+	return e.err
 }
 
 // multiTurnClient simulates a client that returns different responses on each call.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,6 +36,17 @@ func Run(ctx context.Context, client ChatClient, req *ChatRequest, tools map[str
 	messages := make([]Message, len(req.Messages))
 	copy(messages, req.Messages)
 
+	// Guard against nil toolCtx when tools are provided
+	if tools != nil && toolCtx == nil {
+		toolCtx = &tool.ToolContext{Ctx: ctx}
+	}
+
+	// Resolve max iterations
+	maxIter := req.MaxIterations
+	if maxIter <= 0 {
+		maxIter = 20
+	}
+
 	var finalContent strings.Builder
 	var finalThinking strings.Builder
 
@@ -43,8 +55,16 @@ func Run(ctx context.Context, client ChatClient, req *ChatRequest, tools map[str
 	for _, td := range tools {
 		toolDefs = append(toolDefs, td)
 	}
+	sort.Slice(toolDefs, func(i, j int) bool {
+		return toolDefs[i].Name < toolDefs[j].Name
+	})
 
+	iterations := 0
 	for {
+		iterations++
+		if iterations > maxIter {
+			return nil, fmt.Errorf("max iterations (%d) exceeded", maxIter)
+		}
 		chatReq := &ChatRequest{
 			Model:    req.Model,
 			Messages: messages,
