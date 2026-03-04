@@ -2,7 +2,8 @@
 aurelia/
 aurelia-core-infrastructure/
 axon/
-axon-auth/
-axon-chat/
-axon-gate/
-axon-tasks/
+axon-*/
+
+# Build output
+bin/
+/lamina
