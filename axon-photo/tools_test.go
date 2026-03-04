@@ -145,7 +145,10 @@ func TestTakePhotoTool_WithBaseImage(t *testing.T) {
 	store.SetBaseImage("user-1", "bot", "base-img")
 
 	dir := testing.TB.TempDir(t)
-	imgStore := photo.NewImageStore(dir)
+	imgStore, err := photo.NewImageStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	imgStore.SaveWithID("base-img", []byte("ref image data"))
 
 	cfg := &photo.Config{

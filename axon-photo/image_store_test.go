@@ -10,9 +10,18 @@ import (
 	photo "github.com/benaskins/axon-photo"
 )
 
+func mustNewImageStore(t *testing.T, dir string) *photo.ImageStore {
+	t.Helper()
+	store, err := photo.NewImageStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
 func TestImageStore_SaveAndLoad(t *testing.T) {
 	dir := t.TempDir()
-	store := photo.NewImageStore(dir)
+	store := mustNewImageStore(t, dir)
 
 	data := []byte("fake png data")
 	id, err := store.Save(data)
@@ -34,7 +43,7 @@ func TestImageStore_SaveAndLoad(t *testing.T) {
 
 func TestImageStore_SaveWithID(t *testing.T) {
 	dir := t.TempDir()
-	store := photo.NewImageStore(dir)
+	store := mustNewImageStore(t, dir)
 
 	data := []byte("image bytes")
 	err := store.SaveWithID("custom-id", data)
@@ -53,7 +62,7 @@ func TestImageStore_SaveWithID(t *testing.T) {
 
 func TestImageStore_LoadSize_Variant(t *testing.T) {
 	dir := t.TempDir()
-	store := photo.NewImageStore(dir)
+	store := mustNewImageStore(t, dir)
 
 	// Write original and thumb variant
 	os.WriteFile(filepath.Join(dir, "img1.png"), []byte("original"), 0644)
@@ -70,7 +79,7 @@ func TestImageStore_LoadSize_Variant(t *testing.T) {
 
 func TestImageStore_LoadSize_FallsBackToOriginal(t *testing.T) {
 	dir := t.TempDir()
-	store := photo.NewImageStore(dir)
+	store := mustNewImageStore(t, dir)
 
 	os.WriteFile(filepath.Join(dir, "img1.png"), []byte("original"), 0644)
 
@@ -86,7 +95,7 @@ func TestImageStore_LoadSize_FallsBackToOriginal(t *testing.T) {
 
 func TestImageStore_LoadSize_RejectsPathTraversal(t *testing.T) {
 	dir := t.TempDir()
-	store := photo.NewImageStore(dir)
+	store := mustNewImageStore(t, dir)
 
 	for _, id := range []string{"../etc/passwd", "foo/bar", "a\\b", "a..b/c"} {
 		_, err := store.LoadSize(id, "")
@@ -98,7 +107,7 @@ func TestImageStore_LoadSize_RejectsPathTraversal(t *testing.T) {
 
 func TestImageStore_Load_NotFound(t *testing.T) {
 	dir := t.TempDir()
-	store := photo.NewImageStore(dir)
+	store := mustNewImageStore(t, dir)
 
 	_, err := store.Load("nonexistent")
 	if err == nil {
@@ -108,7 +117,7 @@ func TestImageStore_Load_NotFound(t *testing.T) {
 
 func TestImageHandler_ServesImage(t *testing.T) {
 	dir := t.TempDir()
-	store := photo.NewImageStore(dir)
+	store := mustNewImageStore(t, dir)
 	store.SaveWithID("test-img", []byte("png data"))
 
 	handler := photo.ImageHandler(store)
@@ -134,7 +143,7 @@ func TestImageHandler_ServesImage(t *testing.T) {
 
 func TestImageHandler_NotFound(t *testing.T) {
 	dir := t.TempDir()
-	store := photo.NewImageStore(dir)
+	store := mustNewImageStore(t, dir)
 
 	handler := photo.ImageHandler(store)
 	mux := http.NewServeMux()
@@ -151,7 +160,7 @@ func TestImageHandler_NotFound(t *testing.T) {
 
 func TestImageHandler_MethodNotAllowed(t *testing.T) {
 	dir := t.TempDir()
-	store := photo.NewImageStore(dir)
+	store := mustNewImageStore(t, dir)
 
 	handler := photo.ImageHandler(store)
 
@@ -161,5 +170,17 @@ func TestImageHandler_MethodNotAllowed(t *testing.T) {
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestImageStore_SaveWithID_RejectsPathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	store := mustNewImageStore(t, dir)
+
+	for _, id := range []string{"../etc/passwd", "foo/bar", "a\\b", "a..b/c"} {
+		err := store.SaveWithID(id, []byte("data"))
+		if err == nil {
+			t.Errorf("expected error for ID %q", id)
+		}
 	}
 }

@@ -209,6 +209,32 @@ func TestSetBaseImageHandler_WrongUser(t *testing.T) {
 	}
 }
 
+// nilGetGalleryStore wraps memGalleryStore but returns (nil, nil) for GetGalleryImage
+// to simulate a store that returns no error but also no image.
+type nilGetGalleryStore struct {
+	*memGalleryStore
+}
+
+func (s *nilGetGalleryStore) GetGalleryImage(id string) (*photo.GalleryImage, error) {
+	return nil, nil
+}
+
+func TestSetBaseImageHandler_NilImage(t *testing.T) {
+	store := &nilGetGalleryStore{newMemGalleryStore()}
+
+	handler := photo.SetBaseImageHandler(store, testUserID)
+	mux := http.NewServeMux()
+	mux.Handle("PUT /api/agents/{slug}/gallery/{id}/base", handler)
+
+	req := httptest.NewRequest("PUT", "/api/agents/bot/gallery/img-1/base", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
 }

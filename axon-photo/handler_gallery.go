@@ -147,7 +147,7 @@ func (h *setBaseImageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 	// Verify image belongs to this user's agent
 	img, err := h.store.GetGalleryImage(imageID)
-	if err != nil || img.AgentSlug != slug || img.UserID != uid {
+	if err != nil || img == nil || img.AgentSlug != slug || img.UserID != uid {
 		writeError(w, http.StatusNotFound, "image not found")
 		return
 	}

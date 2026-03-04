@@ -85,11 +85,14 @@ func (m *PromptMerger) mergePromptWith(mergeInstruction, baseline, systemPrompt 
 	}
 	conversation := strings.Join(convParts, "\n")
 
-	// Build merge instruction by replacing placeholders
-	instruction := strings.ReplaceAll(mergeInstruction, "{baseline}", baseline)
-	instruction = strings.ReplaceAll(instruction, "{system_prompt}", systemPrompt)
-	instruction = strings.ReplaceAll(instruction, "{conversation}", conversation)
-	instruction = strings.ReplaceAll(instruction, "{scene}", scene)
+	// Build merge instruction by replacing placeholders (single-pass to prevent injection)
+	replacer := strings.NewReplacer(
+		"{baseline}", baseline,
+		"{system_prompt}", systemPrompt,
+		"{conversation}", conversation,
+		"{scene}", scene,
+	)
+	instruction := replacer.Replace(mergeInstruction)
 
 	result, err := m.generate(context.Background(), instruction)
 	if err != nil {

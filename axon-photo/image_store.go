@@ -17,9 +17,20 @@ type ImageStore struct {
 }
 
 // NewImageStore creates a store backed by the given directory.
-func NewImageStore(dir string) *ImageStore {
-	os.MkdirAll(dir, 0755)
-	return &ImageStore{dir: dir}
+// Returns an error if the directory cannot be created.
+func NewImageStore(dir string) (*ImageStore, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("create image store directory: %w", err)
+	}
+	return &ImageStore{dir: dir}, nil
+}
+
+// validateID checks that an image ID does not contain path traversal sequences.
+func validateID(id string) error {
+	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
+		return fmt.Errorf("invalid image ID")
+	}
+	return nil
 }
 
 // Save writes image data to a new file and returns its ID.
@@ -34,6 +45,9 @@ func (s *ImageStore) Save(data []byte) (string, error) {
 
 // SaveWithID writes image data to a file with the given ID.
 func (s *ImageStore) SaveWithID(id string, data []byte) error {
+	if err := validateID(id); err != nil {
+		return err
+	}
 	path := filepath.Join(s.dir, id+".png")
 	return os.WriteFile(path, data, 0644)
 }
@@ -53,8 +67,8 @@ func (s *ImageStore) Load(id string) ([]byte, error) {
 // LoadSize reads image data by ID at the given size variant.
 // If the variant file doesn't exist, falls back to the original.
 func (s *ImageStore) LoadSize(id, size string) ([]byte, error) {
-	if strings.Contains(id, "/") || strings.Contains(id, "\\") || strings.Contains(id, "..") {
-		return nil, fmt.Errorf("invalid image ID")
+	if err := validateID(id); err != nil {
+		return nil, err
 	}
 
 	// Try the size variant first.
