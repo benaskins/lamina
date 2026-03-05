@@ -22,16 +22,16 @@ The workspace is deliberately decomposed into small, focused repos that an AI co
 |------|-------------|
 | [aurelia](https://github.com/benaskins/aurelia) | macOS-native process supervisor for native processes and Docker containers |
 | [axon](https://github.com/benaskins/axon) | Shared toolkit for AI-powered web services — server lifecycle, auth, database, metrics, SSE, stream filtering |
-| [axon-loop](https://github.com/benaskins/axon-loop) | Provider-agnostic conversation loop for LLM-powered agents |
 | [axon-tool](https://github.com/benaskins/axon-tool) | Tool definition and execution primitives for LLM agents |
-| [axon-chat](https://github.com/benaskins/axon-chat) | Chat service with LLM integration, tool calling, SSE streaming, and agent management |
+| [axon-loop](https://github.com/benaskins/axon-loop) | Provider-agnostic conversation loop for LLM-powered agents |
+| [axon-talk](https://github.com/benaskins/axon-talk) | LLM provider adapters for axon-loop (Ollama, more to come) |
+| [axon-lens](https://github.com/benaskins/axon-lens) | LLM-based prompt merging for Stable Diffusion pipelines |
 | [axon-auth](https://github.com/benaskins/axon-auth) | WebAuthn-based authentication with passkey registration, login, and session management |
+| [axon-chat](https://github.com/benaskins/axon-chat) | Chat service with LLM integration, tool calling, SSE streaming, and agent management |
 | [axon-eval](https://github.com/benaskins/axon-eval) | Evaluation framework for running scenario plans against a live service cluster |
 | [axon-gate](https://github.com/benaskins/axon-gate) | Deploy approval gate with Signal notifications and a review UI |
-| [axon-lens](https://github.com/benaskins/axon-lens) | LLM-based prompt merging for Stable Diffusion pipelines |
 | [axon-look](https://github.com/benaskins/axon-look) | Analytics event ingestion and querying backed by ClickHouse |
 | [axon-memo](https://github.com/benaskins/axon-memo) | Long-term memory extraction and consolidation for LLM agents |
-| [axon-talk](https://github.com/benaskins/axon-talk) | LLM provider adapters for axon-loop (Ollama, more to come) |
 | [axon-task](https://github.com/benaskins/axon-task) | Asynchronous task runner for Claude Code sessions and image generation |
 
 ## How they fit together
@@ -45,19 +45,24 @@ lamina (at rest)                    aurelia (in flight)
                     │
                     ▼
               axon (building material)
-               ├── axon-auth ─── authentication
-               ├── axon-chat ─── chat (+ axon-loop, axon-tool)
-               ├── axon-gate ─── deploy gate
-               ├── axon-look ─── analytics
-               ├── axon-memo ─── long-term memory
-               └── axon-task ─── task runner
 
-              axon-tool ─── tool definitions
-               ├── axon-loop ─── conversation loop
-               │    └── axon-talk ─── LLM provider adapters
-               └── axon-lens ─── image management
+Libraries (no service dependencies):
+  axon         ─── server lifecycle, auth, SSE, metrics
+  axon-tool    ─── tool definitions for LLM agents
+  axon-loop    ─── conversation loop (depends on axon-tool)
+  axon-talk    ─── LLM provider adapters (depends on axon-loop)
+  axon-lens    ─── image pipeline (depends on axon-loop)
 
-              axon-eval ─── evaluation (standalone)
+Services (built from libraries):
+  axon-auth    ─── authentication (axon)
+  axon-chat    ─── chat + agents (axon, axon-loop, axon-tool)
+  axon-gate    ─── deploy approval gate (axon)
+  axon-look    ─── analytics (axon)
+  axon-memo    ─── long-term memory (axon)
+  axon-task    ─── task runner (axon)
+
+Standalone:
+  axon-eval    ─── evaluation framework
 ```
 
 You build services from axon modules, lamina manages them as source, and aurelia runs them.
@@ -85,6 +90,7 @@ lamina repo status     # full git status across all repos
 The `lamina` command manages the workspace — checking repo status, running tests, tracking dependencies, and coordinating releases across all modules.
 
 ```bash
+lamina init                        # Clone all workspace repos
 lamina repo                        # Summary table of all sub-repos
 lamina repo status                 # Full git status for every sub-repo
 lamina repo axon-chat              # Git status for a single repo
@@ -104,6 +110,7 @@ lamina release axon-tool v0.2.0    # Tag a module and push the tag
 lamina release --dry-run axon v1.0 # Preview what a release would do
 
 lamina eval plans/smoke.yaml       # Run an evaluation plan against the cluster
+lamina skills                      # List embedded Claude Code skills
 ```
 
 ## Install
@@ -116,7 +123,7 @@ go get github.com/benaskins/axon-loop@latest
 go get github.com/benaskins/axon-memo@latest
 ```
 
-Requires Go 1.24+.
+Requires Go 1.25+.
 
 ## A note on how this was built
 
