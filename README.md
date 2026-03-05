@@ -15,7 +15,7 @@ Lamina is a collection of open-source libraries that provide the building blocks
 | [axon-chat](https://github.com/benaskins/axon-chat) | Chat service with LLM integration, tool calling, SSE streaming, and agent management |
 | [axon-auth](https://github.com/benaskins/axon-auth) | WebAuthn-based authentication with passkey registration, login, and session management |
 | [axon-eval](https://github.com/benaskins/axon-eval) | Evaluation framework for running scenario plans against a live service cluster |
-| [axon-anal](https://github.com/benaskins/axon-anal) | Analytics event ingestion and querying backed by ClickHouse |
+| [axon-look](https://github.com/benaskins/axon-look) | Analytics event ingestion and querying backed by ClickHouse |
 | [axon-gate](https://github.com/benaskins/axon-gate) | Deploy approval gate with Signal notifications and a review UI |
 | [axon-task](https://github.com/benaskins/axon-task) | Asynchronous task runner for Claude Code sessions and image generation |
 
@@ -30,7 +30,7 @@ axon-chat ─── chat service (uses axon-loop, axon-tool, axon)
     │
 axon-memo ─── long-term memory (uses axon)
 axon-auth ─── authentication (uses axon)
-axon-anal ─── analytics (uses axon)
+axon-look ─── analytics (uses axon)
 axon-gate ─── deploy gate (uses axon)
 axon-task ─── task runner (uses axon)
 axon-eval ─── evaluation (standalone)

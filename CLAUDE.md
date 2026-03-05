@@ -17,7 +17,7 @@ Lamina is a **git repository** that serves as the monorepo root for a personal c
 | **aurelia** | macOS-native process supervisor for native processes and Docker containers | Go 1.26 |
 | **aurelia-core-infrastructure** | Personal compute cluster — services, infrastructure, deployment configs | Go 1.24 + SvelteKit |
 | **axon** | Shared Go toolkit for AI-powered web services (HTTP lifecycle, auth, SSE, streaming) | Go 1.24 |
-| **axon-anal** | Analytics event ingestion and querying service | Go |
+| **axon-look** | Analytics event ingestion and querying service | Go |
 | **axon-auth** | Authentication service | Go |
 | **axon-chat** | Chat service with LLM integration, tool calling, SSE streaming | Go |
 | **axon-gate** | Deploy gate service | Go |
