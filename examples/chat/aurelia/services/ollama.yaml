@@ -1,0 +1,11 @@
+service:
+  name: ollama
+  type: external
+
+health:
+  type: http
+  path: /
+  port: 11434
+  interval: 15s
+  timeout: 3s
+  grace_period: 30s

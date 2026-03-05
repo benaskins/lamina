@@ -1,5 +1,5 @@
 # Independent git repos — managed separately
-aurelia/
+/aurelia/
 aurelia-core-infrastructure/
 axon/
 axon-*/
