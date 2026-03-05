@@ -28,9 +28,10 @@ The workspace is deliberately decomposed into small, focused repos that an AI co
 | [axon-auth](https://github.com/benaskins/axon-auth) | WebAuthn-based authentication with passkey registration, login, and session management |
 | [axon-eval](https://github.com/benaskins/axon-eval) | Evaluation framework for running scenario plans against a live service cluster |
 | [axon-gate](https://github.com/benaskins/axon-gate) | Deploy approval gate with Signal notifications and a review UI |
-| axon-lens | Photo and image management with LLM-powered prompts |
+| [axon-lens](https://github.com/benaskins/axon-lens) | LLM-based prompt merging for Stable Diffusion pipelines |
 | [axon-look](https://github.com/benaskins/axon-look) | Analytics event ingestion and querying backed by ClickHouse |
 | [axon-memo](https://github.com/benaskins/axon-memo) | Long-term memory extraction and consolidation for LLM agents |
+| [axon-talk](https://github.com/benaskins/axon-talk) | LLM provider adapters for axon-loop (Ollama, more to come) |
 | [axon-task](https://github.com/benaskins/axon-task) | Asynchronous task runner for Claude Code sessions and image generation |
 
 ## How they fit together
@@ -53,6 +54,7 @@ lamina (at rest)                    aurelia (in flight)
 
               axon-tool ─── tool definitions
                ├── axon-loop ─── conversation loop
+               │    └── axon-talk ─── LLM provider adapters
                └── axon-lens ─── image management
 
               axon-eval ─── evaluation (standalone)

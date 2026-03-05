@@ -165,7 +165,7 @@ The full chat application. Imports both axon-agent and axon-tool.
 - `chattest.MemoryStore` for testing
 
 **Chat-specific tools** (implement `tool.ToolDef` but depend on chat-layer concerns):
-- `take_photo`, `take_private_photo` — image generation via TaskRunner
+- `take_photo` — image generation via TaskRunner
 - `use_claude` — code change submission via TaskRunner
 - `PromptMerger` — image prompt assembly (depends on Store for recent messages)
 
