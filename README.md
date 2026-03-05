@@ -62,6 +62,24 @@ lamina (at rest)                    aurelia (in flight)
 
 You build services from axon modules, lamina manages them as source, and aurelia runs them.
 
+## Getting started
+
+```bash
+git clone https://github.com/benaskins/lamina-mono.git lamina
+cd lamina
+go install ./cmd/lamina/
+lamina init
+```
+
+`lamina init` clones all workspace repos into the current directory. Repos that already exist are skipped, so it's safe to run again.
+
+Once initialised, `lamina repo` shows the state of everything:
+
+```bash
+lamina repo            # summary table
+lamina repo status     # full git status across all repos
+```
+
 ## Lamina CLI
 
 The `lamina` command manages the workspace — checking repo status, running tests, tracking dependencies, and coordinating releases across all modules.
