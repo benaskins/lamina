@@ -116,7 +116,7 @@ From `aurelia-core-infrastructure/docs/plans/roadmap.md`:
 
 ## Lamina 1.0 — Light on the Hill
 
-Lamina 1.0 is the point where a single developer can clone the workspace, run `lamina init && lamina up`, and have a fully operational personal compute platform within minutes. The system should be self-healing, observable, and ready for agents to operate autonomously.
+Lamina 1.0 is the point where a single developer can clone the workspace, run `lamina init && lamina up`, and have a fully operational personal compute platform within an hour on first use. After a power cycle, everything recovers within minutes. The system should be self-healing, observable, and ready for agents to operate autonomously.
 
 ### What 1.0 means
 
