@@ -109,6 +109,7 @@ lamina skills                   # List embedded Claude Code skills
 just build          # Build lamina CLI to bin/
 just install        # Build + install to ~/.local/bin
 just test           # Vet + run tests across axon-* modules
+just install-flux   # Clone, build, install flux.swift CLI
 ```
 
 ### aurelia (process supervisor)
@@ -161,3 +162,5 @@ lamina/
 - **AI agent docs**: Each project has `CLAUDE.md` or `AGENTS.md` with full architecture docs for any AI coding agent
 - **Module publishing**: All axon-* modules are public on GitHub under MIT license, resolved via Go module proxy
 - **GOPRIVATE**: `github.com/benaskins/*` is set in go env to bypass sum DB cache delays
+- **No Python**: deliberate choice — stack is Go + Swift (MLX) + TypeScript (SvelteKit)
+- **Slop guard**: `slop-guard` runs as pre-commit hook and Claude Code post-tool-use hook
