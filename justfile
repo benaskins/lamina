@@ -24,17 +24,17 @@ install-skills:
 install-flux:
     #!/usr/bin/env bash
     set -euo pipefail
-    FLUX_DIR="$HOME/.local/src/flux.swift"
+    FLUX_DIR="$HOME/.local/src/flux.swift.cli"
     if [ ! -d "$FLUX_DIR" ]; then
-        echo "Cloning flux.swift..."
+        echo "Cloning flux.swift.cli..."
         mkdir -p "$HOME/.local/src"
-        git clone https://github.com/filipstrand/flux.swift.git "$FLUX_DIR"
+        git clone https://github.com/mzbac/flux.swift.cli.git "$FLUX_DIR"
     else
-        echo "Updating flux.swift..."
+        echo "Updating flux.swift.cli..."
         git -C "$FLUX_DIR" pull --ff-only
     fi
-    echo "Building flux.swift (release)..."
+    echo "Building flux.swift.cli (release)..."
     cd "$FLUX_DIR"
     swift build -c release
-    cp "$(swift build -c release --show-bin-path)/flux.swift" "$HOME/.local/bin/flux"
+    cp "$(swift build -c release --show-bin-path)/flux.swift.cli" "$HOME/.local/bin/flux"
     echo "Installed flux to ~/.local/bin/flux"
