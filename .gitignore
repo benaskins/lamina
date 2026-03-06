@@ -4,6 +4,9 @@ aurelia-core-infrastructure/
 axon/
 axon-*/
 
+# Design docs (local working artifacts, not committed)
+docs/plans/
+
 # Build output
 bin/
 /lamina
