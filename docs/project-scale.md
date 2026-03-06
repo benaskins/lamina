@@ -27,7 +27,7 @@ A complete personal compute platform for macOS:
 - **axon-loop** — provider-agnostic LLM conversation loop with tool calling
 - **axon-talk** — LLM provider adapters (Ollama)
 - **axon-tool** — tool definition and execution primitives
-- **axon-lens** — LLM-based prompt merging for image pipelines
+- **axon-lens** — Image generation pipeline (FLUX.1 via MLX, prompt merging, gallery)
 - **axon-eval** — evaluation framework with LLM-as-judge grading
 - **lamina** — workspace CLI with dependency graphing, health checks, release management, and embedded Claude Code skills
 

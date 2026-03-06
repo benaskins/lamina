@@ -22,12 +22,12 @@ The workspace is populated by `lamina init`, which clones all sub-repos into thi
 | **axon-chat** | Chat service with LLM integration, tool calling, SSE streaming, and agent management |
 | **axon-eval** | Evaluation framework for running scenario plans against a live service cluster |
 | **axon-gate** | Deploy approval gate with Signal notifications and a review UI |
-| **axon-lens** | LLM-based prompt merging for Stable Diffusion pipelines |
+| **axon-lens** | Image generation pipeline — prompt merging, FLUX.1 via MLX, gallery storage |
 | **axon-look** | Analytics event ingestion and querying backed by ClickHouse |
 | **axon-loop** | Provider-agnostic conversation loop for LLM-powered agents |
 | **axon-memo** | Long-term memory extraction and consolidation for LLM agents |
 | **axon-talk** | LLM provider adapters for axon-loop (Ollama, more to come) |
-| **axon-task** | Asynchronous task runner for Claude Code sessions and image generation |
+| **axon-task** | Generic asynchronous task runner with pluggable workers |
 | **axon-tool** | Tool definition and execution primitives for LLM agents |
 
 Each sub-repo has its own `CLAUDE.md` or `AGENTS.md`. When working in a sub-repo, read its project-level docs first.
@@ -57,7 +57,7 @@ axon         ─── server lifecycle, auth, SSE, metrics
 axon-tool    ─── tool definitions for LLM agents
 axon-loop    ─── conversation loop (depends on axon-tool)
 axon-talk    ─── LLM provider adapters (depends on axon-loop)
-axon-lens    ─── image pipeline (depends on axon-loop)
+axon-lens    ─── image pipeline (depends on axon-tool)
 ```
 
 Services (built from libraries):
