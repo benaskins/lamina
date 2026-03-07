@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ type testResult struct {
 	Repo     string  `json:"repo"`
 	Passed   bool    `json:"passed"`
 	Duration float64 `json:"duration_secs"`
+	Coverage float64 `json:"coverage,omitempty"`
 	Error    string  `json:"error,omitempty"`
 }
 
@@ -27,11 +29,18 @@ var testCmd = &cobra.Command{
 }
 
 func init() {
+	testCmd.Flags().Bool("cover", false, "Run with coverage profiling")
+	testCmd.Flags().Int("min-cover", 0, "Fail if any module is below N% coverage (implies --cover)")
 	rootCmd.AddCommand(testCmd)
 }
 
 func runTest(cmd *cobra.Command, args []string) error {
 	jsonOut, _ := cmd.Flags().GetBool("json")
+	cover, _ := cmd.Flags().GetBool("cover")
+	minCover, _ := cmd.Flags().GetInt("min-cover")
+	if minCover > 0 {
+		cover = true
+	}
 
 	root, err := workspaceRoot()
 	if err != nil {
@@ -60,7 +69,17 @@ func runTest(cmd *cobra.Command, args []string) error {
 		}
 
 		start := time.Now()
-		testExec := exec.Command("go", "test", "./...")
+
+		var testArgs []string
+		var coverFile string
+		if cover {
+			coverFile = filepath.Join(os.TempDir(), fmt.Sprintf("lamina-cover-%s-%d.out", repo, time.Now().UnixNano()))
+			testArgs = []string{"test", "-coverprofile=" + coverFile, "-coverpkg=./...", "./..."}
+		} else {
+			testArgs = []string{"test", "./..."}
+		}
+
+		testExec := exec.Command("go", testArgs...)
 		testExec.Dir = dir
 		if !jsonOut {
 			testExec.Stdout = os.Stdout
@@ -77,6 +96,29 @@ func runTest(cmd *cobra.Command, args []string) error {
 		if runErr != nil {
 			result.Error = runErr.Error()
 		}
+
+		// Parse coverage if enabled and tests passed
+		if cover && runErr == nil && coverFile != "" {
+			coverFunc := exec.Command("go", "tool", "cover", "-func="+coverFile)
+			coverFunc.Dir = dir
+			if out, err := coverFunc.Output(); err == nil {
+				if cov, err := parseCoverageFunc(string(out)); err == nil {
+					result.Coverage = cov
+
+					// Check against threshold
+					threshold := minCover
+					if threshold == 0 {
+						threshold = readCoverageThreshold(dir)
+					}
+					if threshold > 0 && cov < float64(threshold) {
+						result.Passed = false
+						result.Error = fmt.Sprintf("coverage %.1f%% below threshold %d%%", cov, threshold)
+					}
+				}
+			}
+			os.Remove(coverFile)
+		}
+
 		results = append(results, result)
 
 		if !jsonOut {
@@ -99,7 +141,11 @@ func runTest(cmd *cobra.Command, args []string) error {
 		} else {
 			passed++
 		}
-		fmt.Printf("  %s %s (%.1fs)\n", status, r.Repo, r.Duration)
+		coverStr := ""
+		if r.Coverage > 0 {
+			coverStr = fmt.Sprintf(" [%.1f%%]", r.Coverage)
+		}
+		fmt.Printf("  %s %s (%.1fs)%s\n", status, r.Repo, r.Duration, coverStr)
 	}
 	fmt.Printf("\n%d passed, %d failed\n", passed, failed)
 
@@ -107,6 +153,32 @@ func runTest(cmd *cobra.Command, args []string) error {
 		os.Exit(1)
 	}
 	return nil
+}
+
+func parseCoverageFunc(output string) (float64, error) {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "total:") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+			pctStr := strings.TrimSuffix(fields[len(fields)-1], "%")
+			return strconv.ParseFloat(pctStr, 64)
+		}
+	}
+	return 0, fmt.Errorf("no total coverage line found")
+}
+
+func readCoverageThreshold(dir string) int {
+	data, err := os.ReadFile(filepath.Join(dir, ".coverage-threshold"))
+	if err != nil {
+		return 0
+	}
+	val, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0
+	}
+	return val
 }
 
 func resolveTestRepos(root string, args []string) ([]string, error) {
