@@ -72,5 +72,20 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("\nDone: %d cloned, %d skipped\n", cloned, skipped)
+
+	// Install pre-commit hooks in all repos
+	fmt.Println("\nInstalling pre-commit hooks...")
+	for _, repo := range workspaceRepos {
+		dir := filepath.Join(root, repo.Name)
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+			continue
+		}
+		if err := installHooks(dir); err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", repo.Name, err)
+		} else {
+			fmt.Printf("  ✓ %s\n", repo.Name)
+		}
+	}
+
 	return nil
 }
