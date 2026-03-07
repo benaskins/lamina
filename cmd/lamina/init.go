@@ -19,6 +19,7 @@ var workspaceRepos = []struct {
 	{"axon-auth", "https://github.com/benaskins/axon-auth.git"},
 	{"axon-chat", "https://github.com/benaskins/axon-chat.git"},
 	{"axon-eval", "https://github.com/benaskins/axon-eval.git"},
+	{"axon-fact", "https://github.com/benaskins/axon-fact.git"},
 	{"axon-gate", "https://github.com/benaskins/axon-gate.git"},
 	{"axon-lens", "https://github.com/benaskins/axon-lens.git"},
 	{"axon-look", "https://github.com/benaskins/axon-look.git"},
