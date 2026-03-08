@@ -7,13 +7,22 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
-// workspaceRepos is the canonical list of repos that make up the lamina workspace.
-var workspaceRepos = []struct {
-	Name string
-	URL  string
-}{
+// repo describes a workspace repo to clone.
+type repo struct {
+	Name string `yaml:"name"`
+	URL  string `yaml:"url"`
+}
+
+// reposFile is the YAML structure for repos.yaml.
+type reposFile struct {
+	Repos []repo `yaml:"repos"`
+}
+
+// defaultRepos is the built-in fallback when repos.yaml doesn't exist.
+var defaultRepos = []repo{
 	{"aurelia", "https://github.com/benaskins/aurelia.git"},
 	{"axon", "https://github.com/benaskins/axon.git"},
 	{"axon-auth", "https://github.com/benaskins/axon-auth.git"},
@@ -28,6 +37,24 @@ var workspaceRepos = []struct {
 	{"axon-talk", "https://github.com/benaskins/axon-talk.git"},
 	{"axon-task", "https://github.com/benaskins/axon-task.git"},
 	{"axon-tool", "https://github.com/benaskins/axon-tool.git"},
+}
+
+// loadRepos reads repos.yaml from the given directory. If the file doesn't
+// exist, returns the built-in default list.
+func loadRepos(dir string) ([]repo, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "repos.yaml"))
+	if os.IsNotExist(err) {
+		return defaultRepos, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var f reposFile
+	if err := yaml.Unmarshal(data, &f); err != nil {
+		return nil, fmt.Errorf("repos.yaml: %w", err)
+	}
+	return f.Repos, nil
 }
 
 var initCmd = &cobra.Command{
@@ -50,23 +77,28 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	repos, err := loadRepos(root)
+	if err != nil {
+		return err
+	}
+
 	var cloned, skipped int
 
-	for _, repo := range workspaceRepos {
-		dir := filepath.Join(root, repo.Name)
+	for _, r := range repos {
+		dir := filepath.Join(root, r.Name)
 
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			fmt.Printf("  skip  %s (already exists)\n", repo.Name)
+			fmt.Printf("  skip  %s (already exists)\n", r.Name)
 			skipped++
 			continue
 		}
 
-		fmt.Printf("  clone %s\n", repo.Name)
-		c := exec.Command("git", "clone", repo.URL, dir)
+		fmt.Printf("  clone %s\n", r.Name)
+		c := exec.Command("git", "clone", r.URL, dir)
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
 		if err := c.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "  error cloning %s: %v\n", repo.Name, err)
+			fmt.Fprintf(os.Stderr, "  error cloning %s: %v\n", r.Name, err)
 			continue
 		}
 		cloned++
@@ -76,15 +108,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Install pre-commit hooks in all repos
 	fmt.Println("\nInstalling pre-commit hooks...")
-	for _, repo := range workspaceRepos {
-		dir := filepath.Join(root, repo.Name)
+	for _, r := range repos {
+		dir := filepath.Join(root, r.Name)
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 			continue
 		}
 		if err := installHooks(dir); err != nil {
-			fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", repo.Name, err)
+			fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", r.Name, err)
 		} else {
-			fmt.Printf("  ✓ %s\n", repo.Name)
+			fmt.Printf("  ✓ %s\n", r.Name)
 		}
 	}
 

@@ -1,0 +1,29 @@
+repos:
+  - name: aurelia
+    url: https://github.com/benaskins/aurelia.git
+  - name: axon
+    url: https://github.com/benaskins/axon.git
+  - name: axon-auth
+    url: https://github.com/benaskins/axon-auth.git
+  - name: axon-chat
+    url: https://github.com/benaskins/axon-chat.git
+  - name: axon-eval
+    url: https://github.com/benaskins/axon-eval.git
+  - name: axon-fact
+    url: https://github.com/benaskins/axon-fact.git
+  - name: axon-gate
+    url: https://github.com/benaskins/axon-gate.git
+  - name: axon-lens
+    url: https://github.com/benaskins/axon-lens.git
+  - name: axon-look
+    url: https://github.com/benaskins/axon-look.git
+  - name: axon-loop
+    url: https://github.com/benaskins/axon-loop.git
+  - name: axon-memo
+    url: https://github.com/benaskins/axon-memo.git
+  - name: axon-talk
+    url: https://github.com/benaskins/axon-talk.git
+  - name: axon-task
+    url: https://github.com/benaskins/axon-task.git
+  - name: axon-tool
+    url: https://github.com/benaskins/axon-tool.git

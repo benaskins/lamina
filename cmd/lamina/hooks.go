@@ -34,17 +34,21 @@ func runHooks(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		repos, err := loadRepos(root)
+		if err != nil {
+			return err
+		}
 		var installed, failed int
-		for _, repo := range workspaceRepos {
-			dir := filepath.Join(root, repo.Name)
+		for _, r := range repos {
+			dir := filepath.Join(root, r.Name)
 			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 				continue
 			}
 			if err := installHooks(dir); err != nil {
-				fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", repo.Name, err)
+				fmt.Fprintf(os.Stderr, "  ✗ %s: %v\n", r.Name, err)
 				failed++
 			} else {
-				fmt.Printf("  ✓ %s\n", repo.Name)
+				fmt.Printf("  ✓ %s\n", r.Name)
 				installed++
 			}
 		}
