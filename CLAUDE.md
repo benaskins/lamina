@@ -21,11 +21,14 @@ The workspace is populated by `lamina init`, which clones all sub-repos into thi
 | **axon-auth** | WebAuthn-based authentication with passkey registration, login, and session management |
 | **axon-chat** | Chat service with LLM integration, tool calling, SSE streaming, and agent management |
 | **axon-eval** | Evaluation framework for running scenario plans against a live service cluster |
+| **axon-fact** | Event sourcing primitives — Event type, EventStore/Projector/Publisher interfaces |
 | **axon-gate** | Deploy approval gate with Signal notifications and a review UI |
 | **axon-lens** | Image generation pipeline — prompt merging, FLUX.1 via MLX, gallery storage |
 | **axon-look** | Analytics event ingestion and querying backed by ClickHouse |
 | **axon-loop** | Provider-agnostic conversation loop for LLM-powered agents |
 | **axon-memo** | Long-term memory extraction and consolidation for LLM agents |
+| **axon-mind** | Embedded Prolog engine for structured inference over facts and rules |
+| **axon-nats** | NATS adapters for axon services — EventBus[T] for horizontal scaling |
 | **axon-talk** | LLM provider adapters for axon-loop (Ollama, more to come) |
 | **axon-task** | Generic asynchronous task runner with pluggable workers |
 | **axon-tool** | Tool definition and execution primitives for LLM agents |
@@ -58,12 +61,15 @@ axon-tool    ─── tool definitions for LLM agents
 axon-loop    ─── conversation loop (depends on axon-tool)
 axon-talk    ─── LLM provider adapters (depends on axon-loop)
 axon-lens    ─── image pipeline (depends on axon-tool)
+axon-fact    ─── event sourcing primitives (no dependencies)
+axon-mind    ─── embedded Prolog engine (no dependencies)
+axon-nats    ─── NATS adapters (depends on axon)
 ```
 
 Services (built from libraries):
 ```
 axon-auth    ─── authentication (axon)
-axon-chat    ─── chat + agents (axon, axon-loop, axon-tool)
+axon-chat    ─── chat + agents (axon, axon-loop, axon-tool, axon-fact)
 axon-gate    ─── deploy approval gate (axon)
 axon-look    ─── analytics (axon)
 axon-memo    ─── long-term memory (axon)
