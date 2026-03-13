@@ -150,7 +150,7 @@ func runTest(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\n%d passed, %d failed\n", passed, failed)
 
 	if failed > 0 {
-		os.Exit(1)
+		return fmt.Errorf("%d test(s) failed", failed)
 	}
 	return nil
 }

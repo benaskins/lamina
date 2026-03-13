@@ -100,7 +100,7 @@ func runEval(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Criteria: %d passed, %d failed\n", totalPassed, totalFailed)
 
 	if totalFailed > 0 {
-		os.Exit(1)
+		return fmt.Errorf("%d eval criteria failed", totalFailed)
 	}
 	return nil
 }

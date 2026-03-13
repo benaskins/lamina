@@ -54,7 +54,7 @@ func runHooks(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Printf("\n%d installed, %d failed\n", installed, failed)
 		if failed > 0 {
-			os.Exit(1)
+			return fmt.Errorf("%d hook installation(s) failed", failed)
 		}
 		return nil
 	}

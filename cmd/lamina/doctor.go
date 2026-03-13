@@ -70,7 +70,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	if fails > 0 {
 		fmt.Printf("%d checks failed, %d warnings\n", fails, warns)
-		os.Exit(1)
+		return fmt.Errorf("%d health check(s) failed", fails)
 	} else if warns > 0 {
 		fmt.Printf("All checks passed (%d warnings)\n", warns)
 	} else {
