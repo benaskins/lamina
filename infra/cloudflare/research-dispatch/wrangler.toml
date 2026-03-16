@@ -1,0 +1,7 @@
+name = "research-dispatch"
+main = "src/index.ts"
+compatibility_date = "2026-03-16"
+account_id = "aebc560b389c1608f1a6620afe6d2a14"
+
+[ai]
+binding = "AI"

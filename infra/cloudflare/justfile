@@ -1,0 +1,86 @@
+set dotenv-load := false
+
+account_id := env("CLOUDFLARE_ACCOUNT_ID")
+api_token := env("CLOUDFLARE_AXON_GATE_TOKEN")
+gateway_name := "axon-gate"
+workers_domain := "ben-askins.workers.dev"
+wrangler := "./node_modules/.bin/wrangler"
+
+# Show current state of all cloudflare resources
+status:
+    @echo "=== AI Gateway ==="
+    @curl -s -H "Authorization: Bearer {{api_token}}" \
+        "https://api.cloudflare.com/client/v4/accounts/{{account_id}}/ai-gateway/gateways" \
+        | jq '.result[] | {name: .name, id: .id}' 2>/dev/null || echo "  none"
+    @echo ""
+    @echo "=== Workers ==="
+    @curl -s -H "Authorization: Bearer {{api_token}}" \
+        "https://api.cloudflare.com/client/v4/accounts/{{account_id}}/workers/scripts" \
+        | jq '.result[] | {name: .id}' 2>/dev/null || echo "  none"
+
+# Install wrangler (dev dependency only)
+install:
+    npm install
+
+# Provision all cloudflare infrastructure
+provision: install gateway deploy-proxy deploy-dispatch health
+    @echo ""
+    @echo "=== Provisioning complete ==="
+
+# Create the AI Gateway
+gateway:
+    @echo "Creating AI Gateway '{{gateway_name}}'..."
+    @curl -s -X POST \
+        -H "Authorization: Bearer {{api_token}}" \
+        -H "Content-Type: application/json" \
+        -d '{"id": "{{gateway_name}}", "name": "{{gateway_name}}", "slug": "{{gateway_name}}", "collect_logs": true, "cache_invalidate_on_update": true, "cache_ttl": 0, "rate_limiting_interval": 0, "rate_limiting_limit": 0, "rate_limiting_technique": "fixed"}' \
+        "https://api.cloudflare.com/client/v4/accounts/{{account_id}}/ai-gateway/gateways" \
+        | jq '{success: .success, id: .result.id, name: .result.name}'
+
+# Deploy the proxy worker
+deploy-proxy:
+    @echo "Deploying wire-proxy..."
+    cd wire-proxy && CLOUDFLARE_API_TOKEN={{api_token}} ../{{wrangler}} deploy
+
+# Deploy the research dispatch worker
+deploy-dispatch:
+    @echo "Deploying research-dispatch..."
+    cd research-dispatch && CLOUDFLARE_API_TOKEN={{api_token}} ../{{wrangler}} deploy
+
+# Deploy all workers
+deploy: deploy-proxy deploy-dispatch
+
+# Set wire token on the proxy worker
+secret-proxy token:
+    cd wire-proxy && export CLOUDFLARE_API_TOKEN={{api_token}} && echo "{{token}}" | ../{{wrangler}} secret put WIRE_TOKEN
+
+# Set wire token on the dispatch worker
+secret-dispatch token:
+    cd research-dispatch && export CLOUDFLARE_API_TOKEN={{api_token}} && echo "{{token}}" | ../{{wrangler}} secret put WIRE_TOKEN
+
+# Set the shared wire token on both workers
+secrets token:
+    just secret-proxy {{token}}
+    just secret-dispatch {{token}}
+
+# Health check all endpoints
+health:
+    @echo ""
+    @echo "=== Health checks ==="
+    @echo -n "wire-proxy: " && curl -sf https://wire-proxy.{{workers_domain}}/health | jq -r '.status' || echo "unreachable"
+    @echo -n "research-dispatch: " && curl -sf https://research-dispatch.{{workers_domain}}/health | jq -r '.status' || echo "unreachable"
+
+# Tear down all cloudflare infrastructure
+teardown:
+    @echo "Tearing down workers..."
+    cd wire-proxy && CLOUDFLARE_API_TOKEN={{api_token}} ../{{wrangler}} delete --force || true
+    cd research-dispatch && CLOUDFLARE_API_TOKEN={{api_token}} ../{{wrangler}} delete --force || true
+    @echo "Deleting AI Gateway..."
+    @curl -s -X DELETE \
+        -H "Authorization: Bearer {{api_token}}" \
+        "https://api.cloudflare.com/client/v4/accounts/{{account_id}}/ai-gateway/gateways/{{gateway_name}}" \
+        | jq '.success'
+
+# Tail logs for a worker (usage: just logs wire-proxy)
+logs worker:
+    cd {{worker}} && CLOUDFLARE_API_TOKEN={{api_token}} ../{{wrangler}} tail
