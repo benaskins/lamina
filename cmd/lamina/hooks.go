@@ -125,9 +125,7 @@ fi
 
 # 3. slop-guard (optional — skip if not installed)
 if command -v slop-guard &>/dev/null; then
-    staged=$(git diff --cached --name-only --diff-filter=ACM)
-    if [ -n "$staged" ]; then
-        echo "$staged" | xargs slop-guard
-    fi
+    git diff --cached --name-only --diff-filter=ACM -z | xargs -0 slop-guard
+
 fi
 `
