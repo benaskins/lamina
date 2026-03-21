@@ -1,18 +1,18 @@
 module github.com/benaskins/lamina/examples/chat
 
-go 1.26.0
+go 1.26.1
 
 require (
-	github.com/benaskins/axon v0.3.1
-	github.com/benaskins/axon-loop v0.3.0
-	github.com/benaskins/axon-talk v0.2.0
+	github.com/benaskins/axon v0.4.3
+	github.com/benaskins/axon-loop v0.6.0
+	github.com/benaskins/axon-talk v0.4.2
 )
 
 require (
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
-	github.com/benaskins/axon-tool v0.1.0 // indirect
+	github.com/benaskins/axon-tool v0.1.6 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/caarlos0/env/v11 v11.3.1 // indirect

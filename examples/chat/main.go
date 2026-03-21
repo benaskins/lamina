@@ -97,16 +97,20 @@ func (h *chatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sse.SetSSEHeaders(w)
 
 	// Run the conversation loop, streaming tokens as SSE events
-	result, err := loop.Run(r.Context(), h.client, &loop.Request{
-		Model:    h.model,
-		Messages: messages,
-		Stream:   true,
-	}, nil, nil, loop.Callbacks{
-		OnToken: func(token string) {
-			sse.SendEvent(w, flusher, map[string]string{
-				"type":  "token",
-				"token": token,
-			})
+	result, err := loop.Run(r.Context(), loop.RunConfig{
+		Client: h.client,
+		Request: &loop.Request{
+			Model:    h.model,
+			Messages: messages,
+			Stream:   true,
+		},
+		Callbacks: loop.Callbacks{
+			OnToken: func(token string) {
+				sse.SendEvent(w, flusher, map[string]string{
+					"type":  "token",
+					"token": token,
+				})
+			},
 		},
 	})
 
