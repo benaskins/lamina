@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# refresh-getlamina — update getlamina.ai with current versions and deps
+#
+# Usage: bin/refresh-getlamina [--deploy]
+#
+# Updates data-version attributes and dependency graph in getlamina.ai's
+# index.html from the current workspace state. With --deploy, copies to
+# hestia and deploys to Cloudflare Pages.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SITE_FILE="${GETLAMINA_SITE:-/Users/benaskins/dev/sites/getlamina.ai/index.html}"
+DEPLOY=false
+
+if [[ "${1:-}" == "--deploy" ]]; then
+  DEPLOY=true
+fi
+
+if [[ ! -f "$SITE_FILE" ]]; then
+  echo "ERROR: site file not found: $SITE_FILE" >&2
+  exit 1
+fi
+
+echo "==> Updating versions"
+
+for dir in "$ROOT"/*/; do
+  name="$(basename "$dir")"
+  [[ -d "$dir/.git" ]] || continue
+
+  tag=$(cd "$dir" && git describe --tags --abbrev=0 2>/dev/null || echo "")
+  [[ -z "$tag" ]] && continue
+
+  if grep -q "data-id=\"$name\"" "$SITE_FILE" 2>/dev/null; then
+    sed -i '' "s|data-id=\"$name\"\(.*\)data-version=\"[^\"]*\"|data-id=\"$name\"\1data-version=\"$tag\"|" "$SITE_FILE"
+    echo "  $name → $tag"
+  fi
+done
+
+echo "==> Updating dependency graph"
+
+# Build graph JSON from go.mod files
+graph_lines=""
+for dir in "$ROOT"/*/; do
+  name="$(basename "$dir")"
+  modfile="$dir/go.mod"
+  [[ -f "$modfile" ]] || continue
+
+  # Extract benaskins deps from go.mod (skip the module line itself)
+  deps=$( (grep 'github.com/benaskins/' "$modfile" || true) \
+    | (grep -v '^module' || true) \
+    | sed 's|.*github.com/benaskins/||; s| .*||' \
+    | (grep -v "^${name}$" || true) \
+    | sort -u )
+
+  dep_json="[]"
+  if [[ -n "$deps" ]]; then
+    dep_json="[$(echo "$deps" | sed 's|.*|"&"|' | paste -sd, -)]"
+  fi
+
+  graph_lines+="      \"$name\": { \"deps\": $dep_json },"$'\n'
+done
+
+# Remove trailing comma from last line
+graph_lines=$(echo "$graph_lines" | sed '$ s/,$//')
+
+# Write new graph block to temp file, then splice it into the HTML
+graph_tmp=$(mktemp)
+cat > "$graph_tmp" <<GRAPH
+    const graph = {
+${graph_lines}    };
+GRAPH
+
+# Find line numbers of the graph block and replace
+graph_start=$(grep -n 'const graph = {' "$SITE_FILE" | head -1 | cut -d: -f1)
+graph_end=$(awk "NR>$graph_start && /^[[:space:]]*\};/ { print NR; exit }" "$SITE_FILE")
+
+if [[ -n "$graph_start" && -n "$graph_end" ]]; then
+  head -n "$((graph_start - 1))" "$SITE_FILE" > "${SITE_FILE}.tmp"
+  cat "$graph_tmp" >> "${SITE_FILE}.tmp"
+  tail -n "+$((graph_end + 1))" "$SITE_FILE" >> "${SITE_FILE}.tmp"
+  mv "${SITE_FILE}.tmp" "$SITE_FILE"
+  echo "  graph updated ($(echo "$graph_lines" | wc -l | tr -d ' ') modules)"
+else
+  echo "  WARNING: could not find graph block in $SITE_FILE"
+fi
+
+rm -f "$graph_tmp"
+
+echo "==> Done"
+
+if $DEPLOY; then
+  echo "==> Deploying to hestia + Cloudflare"
+  scp "$SITE_FILE" hestia:~/dev/sites/getlamina.ai/index.html
+  ssh hestia 'source ~/.zshrc 2>/dev/null; cd ~/dev/sites && bin/deploy-site getlamina.ai'
+fi
