@@ -113,6 +113,20 @@ func releaseOne(root, name, version string, dryRun bool) error {
 	}
 
 	fmt.Printf("Released %s %s\n", name, version)
+
+	// Refresh getlamina.ai with updated versions and deps
+	refreshScript := filepath.Join(root, "bin", "refresh-getlamina")
+	if _, err := os.Stat(refreshScript); err == nil {
+		fmt.Println("Refreshing getlamina.ai...")
+		refresh := exec.Command(refreshScript, "--deploy")
+		refresh.Dir = root
+		refresh.Stdout = os.Stdout
+		refresh.Stderr = os.Stderr
+		if err := refresh.Run(); err != nil {
+			fmt.Printf("  warning: refresh-getlamina failed: %v\n", err)
+		}
+	}
+
 	return nil
 }
 
