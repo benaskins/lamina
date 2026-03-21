@@ -1,0 +1,1296 @@
+From 272dabee16eecaf033226f466b2180a0ec9e2b72 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 21 Mar 2026 09:27:34 +0000
+Subject: [PATCH] feat: add generic OpenAI-compatible provider
+
+Add openai/ package that implements loop.LLMClient for any provider
+speaking the /v1/chat/completions protocol (OpenAI, Gemini, Grok,
+Groq, Together, Fireworks, Azure OpenAI). Extracted from the
+Cloudflare provider with platform-specific bits removed.
+
+https://claude.ai/code/session_01XREXa28KtaVBssxgZrf1Bh
+---
+ README.md             |  13 +-
+ openai/openai.go      | 420 ++++++++++++++++++++++++++++++++++++++
+ openai/openai_test.go | 457 ++++++++++++++++++++++++++++++++++++++++++
+ openai/sse.go         |  80 ++++++++
+ openai/stream_test.go | 265 ++++++++++++++++++++++++
+ 5 files changed, 1232 insertions(+), 3 deletions(-)
+ create mode 100644 openai/openai.go
+ create mode 100644 openai/openai_test.go
+ create mode 100644 openai/sse.go
+ create mode 100644 openai/stream_test.go
+
+diff --git a/README.md b/README.md
+index d68d59d..121e137 100644
+--- a/README.md
++++ b/README.md
+@@ -35,9 +35,16 @@ result, err := loop.Run(ctx, client, &loop.Request{
+ 
+ ## Providers
+ 
+-| Package  | Backend                        | Constructor                          |
+-|----------|--------------------------------|--------------------------------------|
+-| `ollama` | [Ollama](https://ollama.com)   | `ollama.NewClientFromEnvironment()`  |
++| Package      | Backend                        | Constructor                          |
++|--------------|--------------------------------|--------------------------------------|
++| `ollama`     | [Ollama](https://ollama.com)   | `ollama.NewClientFromEnvironment()`  |
++| `anthropic`  | Anthropic Messages API         | `anthropic.NewClient(baseURL, key)`  |
++| `openai`     | OpenAI-compatible APIs         | `openai.NewClient(baseURL, token)`   |
++| `cloudflare` | Cloudflare Workers AI          | `cloudflare.NewClient(baseURL, token)` |
++
++The `openai` package works with any provider that speaks the OpenAI
++`/v1/chat/completions` protocol: OpenAI, Gemini, Grok, Groq, Together,
++Fireworks, Azure OpenAI, and others.
+ 
+ ## License
+ 
+diff --git a/openai/openai.go b/openai/openai.go
+new file mode 100644
+index 0000000..bd0d5f0
+--- /dev/null
++++ b/openai/openai.go
+@@ -0,0 +1,420 @@
++// Package openai provides a loop.LLMClient implementation for any
++// OpenAI-compatible chat completions API. It works with OpenAI, Azure
++// OpenAI, Gemini, Grok, Groq, Together, Fireworks, and any other
++// provider that speaks the /v1/chat/completions protocol.
++package openai
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++	"strings"
++
++	"github.com/benaskins/axon/stream"
++	loop "github.com/benaskins/axon-loop"
++	tool "github.com/benaskins/axon-tool"
++)
++
++// Client implements loop.LLMClient for OpenAI-compatible APIs.
++type Client struct {
++	baseURL    string
++	token      string
++	httpClient *http.Client
++}
++
++// Option configures a Client.
++type Option func(*Client)
++
++// WithHTTPClient sets a custom http.Client (useful for testing).
++func WithHTTPClient(c *http.Client) Option {
++	return func(cl *Client) { cl.httpClient = c }
++}
++
++// NewClient creates a Client that talks to an OpenAI-compatible API.
++//
++// baseURL is the API root, e.g. "https://api.openai.com" or
++// "https://generativelanguage.googleapis.com/v1beta/openai".
++// token is the bearer token for authentication.
++func NewClient(baseURL, token string, opts ...Option) *Client {
++	c := &Client{
++		baseURL:    strings.TrimRight(baseURL, "/"),
++		token:      token,
++		httpClient: http.DefaultClient,
++	}
++	for _, opt := range opts {
++		opt(c)
++	}
++	return c
++}
++
++// Chat sends a request to the chat completions endpoint and delivers
++// the response through fn. When req.Stream is true, the response is
++// streamed via SSE with incremental token delivery.
++func (c *Client) Chat(ctx context.Context, req *loop.Request, fn func(loop.Response) error) error {
++	body := buildRequest(req)
++
++	jsonBody, err := json.Marshal(body)
++	if err != nil {
++		return fmt.Errorf("openai: marshal request: %w", err)
++	}
++
++	url := c.baseURL + "/v1/chat/completions"
++	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
++	if err != nil {
++		return fmt.Errorf("openai: create request: %w", err)
++	}
++	httpReq.Header.Set("Authorization", "Bearer "+c.token)
++	httpReq.Header.Set("Content-Type", "application/json")
++
++	httpResp, err := c.httpClient.Do(httpReq)
++	if err != nil {
++		return fmt.Errorf("openai: do request: %w", err)
++	}
++	defer httpResp.Body.Close()
++
++	if req.Stream {
++		return c.handleStream(httpResp, req.Tools, fn)
++	}
++	return c.handleFull(httpResp, req.Tools, fn)
++}
++
++func (c *Client) handleFull(httpResp *http.Response, tools []tool.ToolDef, fn func(loop.Response) error) error {
++	respBody, err := io.ReadAll(httpResp.Body)
++	if err != nil {
++		return fmt.Errorf("openai: read response: %w", err)
++	}
++
++	if httpResp.StatusCode != http.StatusOK {
++		return fmt.Errorf("openai: status %d: %s", httpResp.StatusCode, respBody)
++	}
++
++	var completion chatCompletion
++	if err := json.Unmarshal(respBody, &completion); err != nil {
++		return fmt.Errorf("openai: decode response: %w", err)
++	}
++
++	resp := fromResponse(completion)
++	normalizeToolCallArgs(&resp, tools)
++	return fn(resp)
++}
++
++func (c *Client) handleStream(httpResp *http.Response, tools []tool.ToolDef, fn func(loop.Response) error) error {
++	if httpResp.StatusCode != http.StatusOK {
++		respBody, _ := io.ReadAll(httpResp.Body)
++		return fmt.Errorf("openai: status %d: %s", httpResp.StatusCode, respBody)
++	}
++
++	// Accumulate structured tool calls by index.
++	type pendingToolCall struct {
++		name string
++		args strings.Builder
++	}
++	pending := make(map[int]*pendingToolCall)
++
++	err := parseSSE(httpResp.Body, func(ev sseEvent) error {
++		if ev.Done {
++			var toolCalls []loop.ToolCall
++			for i := 0; i < len(pending); i++ {
++				tc := pending[i]
++				var args map[string]any
++				if tc.args.Len() > 0 {
++					json.Unmarshal([]byte(tc.args.String()), &args)
++				}
++				toolCalls = append(toolCalls, loop.ToolCall{
++					Name:      tc.name,
++					Arguments: args,
++				})
++			}
++
++			resp := loop.Response{Done: true, ToolCalls: toolCalls}
++			normalizeToolCallArgs(&resp, tools)
++			return fn(resp)
++		}
++
++		// Accumulate structured tool call deltas.
++		for _, tc := range ev.Delta.ToolCalls {
++			p, ok := pending[tc.Index]
++			if !ok {
++				p = &pendingToolCall{}
++				pending[tc.Index] = p
++			}
++			if tc.Function.Name != "" {
++				p.name = tc.Function.Name
++			}
++			p.args.WriteString(tc.Function.Arguments)
++		}
++
++		// Emit content tokens directly.
++		if ev.Delta.Content != "" {
++			if err := fn(loop.Response{Content: ev.Delta.Content}); err != nil {
++				return err
++			}
++		}
++
++		// Emit thinking tokens directly.
++		if ev.Delta.ReasoningContent != "" {
++			if err := fn(loop.Response{Thinking: ev.Delta.ReasoningContent}); err != nil {
++				return err
++			}
++		}
++
++		return nil
++	})
++
++	return err
++}
++
++func buildRequest(req *loop.Request) chatRequest {
++	cr := chatRequest{
++		Model:    req.Model,
++		Messages: toMessages(req.Messages),
++	}
++
++	if v, ok := req.Options["max_tokens"]; ok {
++		if mt, ok := v.(int); ok {
++			cr.MaxTokens = mt
++		}
++	}
++
++	if v, ok := req.Options["temperature"]; ok {
++		if t, ok := v.(float64); ok {
++			cr.Temperature = &t
++		}
++	}
++
++	if len(req.Tools) > 0 {
++		cr.Tools = toTools(req.Tools)
++	}
++
++	if req.Stream {
++		s := true
++		cr.Stream = &s
++	}
++
++	return cr
++}
++
++func toMessages(msgs []loop.Message) []message {
++	out := make([]message, 0, len(msgs))
++	// Track pending tool call IDs so we can match tool results.
++	var pendingCallIDs []string
++
++	for _, m := range msgs {
++		msg := message{
++			Role:    string(m.Role),
++			Content: m.Content,
++		}
++
++		if len(m.ToolCalls) > 0 {
++			msg.ToolCalls = toRequestToolCalls(m.ToolCalls)
++			pendingCallIDs = nil
++			for _, tc := range msg.ToolCalls {
++				pendingCallIDs = append(pendingCallIDs, tc.ID)
++			}
++		}
++
++		// Match tool result messages with their call IDs.
++		if m.Role == "tool" && len(pendingCallIDs) > 0 {
++			msg.ToolCallID = pendingCallIDs[0]
++			pendingCallIDs = pendingCallIDs[1:]
++		}
++
++		out = append(out, msg)
++	}
++	return out
++}
++
++func toRequestToolCalls(calls []loop.ToolCall) []requestToolCall {
++	out := make([]requestToolCall, len(calls))
++	for i, tc := range calls {
++		args, _ := json.Marshal(tc.Arguments)
++		out[i] = requestToolCall{
++			ID:   fmt.Sprintf("call_%d", i),
++			Type: "function",
++			Function: requestToolCallFunction{
++				Name:      tc.Name,
++				Arguments: string(args),
++			},
++		}
++	}
++	return out
++}
++
++func toTools(defs []tool.ToolDef) []toolDef {
++	out := make([]toolDef, len(defs))
++	for i, d := range defs {
++		out[i] = toolDef{
++			Type: "function",
++			Function: functionDef{
++				Name:        d.Name,
++				Description: d.Description,
++				Parameters: parametersDef{
++					Type:       d.Parameters.Type,
++					Required:   d.Parameters.Required,
++					Properties: toPropertyDefs(d.Parameters.Properties),
++				},
++			},
++		}
++	}
++	return out
++}
++
++func toPropertyDefs(props map[string]tool.PropertySchema) map[string]propertyDef {
++	if len(props) == 0 {
++		return nil
++	}
++	out := make(map[string]propertyDef, len(props))
++	for name, prop := range props {
++		out[name] = toPropertyDef(prop)
++	}
++	return out
++}
++
++func toPropertyDef(prop tool.PropertySchema) propertyDef {
++	pd := propertyDef{
++		Type:        prop.Type,
++		Description: prop.Description,
++		Enum:        prop.Enum,
++		Default:     prop.Default,
++		Required:    prop.Required,
++		Properties:  toPropertyDefs(prop.Properties),
++	}
++	if prop.Items != nil {
++		items := toPropertyDef(*prop.Items)
++		pd.Items = &items
++	}
++	return pd
++}
++
++func fromResponse(completion chatCompletion) loop.Response {
++	if len(completion.Choices) == 0 {
++		return loop.Response{Done: true}
++	}
++
++	choice := completion.Choices[0]
++	resp := loop.Response{
++		Content:  strings.TrimLeft(choice.Message.Content, "\n"),
++		Thinking: strings.TrimSpace(choice.Message.ReasoningContent),
++		Done:     true,
++	}
++
++	if len(choice.Message.ToolCalls) > 0 {
++		resp.ToolCalls = make([]loop.ToolCall, len(choice.Message.ToolCalls))
++		for i, tc := range choice.Message.ToolCalls {
++			var args map[string]any
++			json.Unmarshal([]byte(tc.Function.Arguments), &args)
++			resp.ToolCalls[i] = loop.ToolCall{
++				Name:      tc.Function.Name,
++				Arguments: args,
++			}
++		}
++	}
++
++	return resp
++}
++
++// normalizeToolCallArgs coerces tool call argument types to match the
++// JSON Schema types declared in each tool's parameter schema.
++func normalizeToolCallArgs(resp *loop.Response, tools []tool.ToolDef) {
++	if len(resp.ToolCalls) == 0 || len(tools) == 0 {
++		return
++	}
++
++	toolTypes := make(map[string]map[string]string, len(tools))
++	for _, td := range tools {
++		types := make(map[string]string, len(td.Parameters.Properties))
++		for name, prop := range td.Parameters.Properties {
++			types[name] = prop.Type
++		}
++		toolTypes[td.Name] = types
++	}
++
++	for i, tc := range resp.ToolCalls {
++		if types, ok := toolTypes[tc.Name]; ok {
++			resp.ToolCalls[i].Arguments = stream.NormalizeArguments(tc.Arguments, types)
++		}
++	}
++}
++
++// Wire types for the OpenAI chat completions API.
++
++type chatRequest struct {
++	Model       string    `json:"model"`
++	Messages    []message `json:"messages"`
++	MaxTokens   int       `json:"max_tokens,omitempty"`
++	Temperature *float64  `json:"temperature,omitempty"`
++	Tools       []toolDef `json:"tools,omitempty"`
++	Stream      *bool     `json:"stream,omitempty"`
++}
++
++type message struct {
++	Role       string            `json:"role"`
++	Content    string            `json:"content"`
++	ToolCalls  []requestToolCall `json:"tool_calls,omitempty"`
++	ToolCallID string            `json:"tool_call_id,omitempty"`
++}
++
++type requestToolCall struct {
++	ID       string                  `json:"id"`
++	Type     string                  `json:"type"`
++	Function requestToolCallFunction `json:"function"`
++}
++
++type requestToolCallFunction struct {
++	Name      string `json:"name"`
++	Arguments string `json:"arguments"`
++}
++
++type toolDef struct {
++	Type     string      `json:"type"`
++	Function functionDef `json:"function"`
++}
++
++type functionDef struct {
++	Name        string        `json:"name"`
++	Description string        `json:"description"`
++	Parameters  parametersDef `json:"parameters"`
++}
++
++type parametersDef struct {
++	Type       string                 `json:"type"`
++	Required   []string               `json:"required,omitempty"`
++	Properties map[string]propertyDef `json:"properties,omitempty"`
++}
++
++type propertyDef struct {
++	Type        string                 `json:"type"`
++	Description string                 `json:"description,omitempty"`
++	Enum        []any                  `json:"enum,omitempty"`
++	Default     any                    `json:"default,omitempty"`
++	Items       *propertyDef           `json:"items,omitempty"`
++	Properties  map[string]propertyDef `json:"properties,omitempty"`
++	Required    []string               `json:"required,omitempty"`
++}
++
++type chatCompletion struct {
++	Choices []choice `json:"choices"`
++}
++
++type choice struct {
++	Message responseMessage `json:"message"`
++}
++
++type responseMessage struct {
++	Role             string             `json:"role"`
++	Content          string             `json:"content"`
++	ReasoningContent string             `json:"reasoning_content"`
++	ToolCalls        []responseToolCall `json:"tool_calls"`
++}
++
++type responseToolCall struct {
++	Function responseToolCallFunction `json:"function"`
++}
++
++type responseToolCallFunction struct {
++	Name      string `json:"name"`
++	Arguments string `json:"arguments"`
++}
+diff --git a/openai/openai_test.go b/openai/openai_test.go
+new file mode 100644
+index 0000000..b6ec1b1
+--- /dev/null
++++ b/openai/openai_test.go
+@@ -0,0 +1,457 @@
++package openai
++
++import (
++	"context"
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	loop "github.com/benaskins/axon-loop"
++	tool "github.com/benaskins/axon-tool"
++)
++
++func TestClientImplementsLLMClient(t *testing.T) {
++	var _ loop.LLMClient = NewClient("http://example.com", "token")
++}
++
++func TestChat_BasicResponse(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.Header.Get("Authorization") != "Bearer test-token" {
++			t.Errorf("auth = %q", r.Header.Get("Authorization"))
++		}
++		if r.Header.Get("Content-Type") != "application/json" {
++			t.Errorf("content-type = %q", r.Header.Get("Content-Type"))
++		}
++
++		json.NewEncoder(w).Encode(chatCompletion{
++			Choices: []choice{{
++				Message: responseMessage{Content: "4"},
++			}},
++		})
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "test-token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "What is 2+2?"}},
++	}
++
++	var got loop.Response
++	err := client.Chat(context.Background(), req, func(resp loop.Response) error {
++		got = resp
++		return nil
++	})
++	if err != nil {
++		t.Fatalf("Chat error: %v", err)
++	}
++	if got.Content != "4" {
++		t.Errorf("content = %q, want %q", got.Content, "4")
++	}
++	if !got.Done {
++		t.Error("done should be true")
++	}
++}
++
++func TestChat_ModelInRequestBody(t *testing.T) {
++	var gotBody chatRequest
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		json.NewDecoder(r.Body).Decode(&gotBody)
++		json.NewEncoder(w).Encode(chatCompletion{
++			Choices: []choice{{Message: responseMessage{Content: "ok"}}},
++		})
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o-mini",
++		Messages: []loop.Message{{Role: "user", Content: "hi"}},
++	}
++
++	client.Chat(context.Background(), req, func(resp loop.Response) error { return nil })
++
++	if gotBody.Model != "gpt-4o-mini" {
++		t.Errorf("model = %q, want gpt-4o-mini", gotBody.Model)
++	}
++}
++
++func TestChat_EndpointPath(t *testing.T) {
++	var gotPath string
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		gotPath = r.URL.Path
++		json.NewEncoder(w).Encode(chatCompletion{
++			Choices: []choice{{Message: responseMessage{Content: "ok"}}},
++		})
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "hi"}},
++	}
++
++	client.Chat(context.Background(), req, func(resp loop.Response) error { return nil })
++
++	if gotPath != "/v1/chat/completions" {
++		t.Errorf("path = %q, want /v1/chat/completions", gotPath)
++	}
++}
++
++func TestChat_WithThinking(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		json.NewEncoder(w).Encode(chatCompletion{
++			Choices: []choice{{
++				Message: responseMessage{
++					Content:          "4",
++					ReasoningContent: "2+2 equals 4",
++				},
++			}},
++		})
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "o3",
++		Messages: []loop.Message{{Role: "user", Content: "What is 2+2?"}},
++	}
++
++	var got loop.Response
++	client.Chat(context.Background(), req, func(resp loop.Response) error {
++		got = resp
++		return nil
++	})
++	if got.Thinking != "2+2 equals 4" {
++		t.Errorf("thinking = %q, want %q", got.Thinking, "2+2 equals 4")
++	}
++}
++
++func TestChat_WithToolCalls(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		json.NewEncoder(w).Encode(chatCompletion{
++			Choices: []choice{{
++				Message: responseMessage{
++					ToolCalls: []responseToolCall{{
++						Function: responseToolCallFunction{
++							Name:      "get_weather",
++							Arguments: `{"city":"Sydney"}`,
++						},
++					}},
++				},
++			}},
++		})
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "Weather in Sydney?"}},
++		Tools: []tool.ToolDef{{
++			Name:        "get_weather",
++			Description: "Get weather",
++			Parameters: tool.ParameterSchema{
++				Type:     "object",
++				Required: []string{"city"},
++				Properties: map[string]tool.PropertySchema{
++					"city": {Type: "string", Description: "City name"},
++				},
++			},
++		}},
++	}
++
++	var got loop.Response
++	client.Chat(context.Background(), req, func(resp loop.Response) error {
++		got = resp
++		return nil
++	})
++
++	if len(got.ToolCalls) != 1 {
++		t.Fatalf("got %d tool calls, want 1", len(got.ToolCalls))
++	}
++	if got.ToolCalls[0].Name != "get_weather" {
++		t.Errorf("name = %q, want get_weather", got.ToolCalls[0].Name)
++	}
++	if got.ToolCalls[0].Arguments["city"] != "Sydney" {
++		t.Errorf("city = %v, want Sydney", got.ToolCalls[0].Arguments["city"])
++	}
++}
++
++func TestChat_NormalizesToolCallArgs(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		json.NewEncoder(w).Encode(chatCompletion{
++			Choices: []choice{{
++				Message: responseMessage{
++					ToolCalls: []responseToolCall{{
++						Function: responseToolCallFunction{
++							Name:      "set_temp",
++							Arguments: `{"degrees":"22","enabled":"true"}`,
++						},
++					}},
++				},
++			}},
++		})
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "Set temp to 22"}},
++		Tools: []tool.ToolDef{{
++			Name: "set_temp",
++			Parameters: tool.ParameterSchema{
++				Type: "object",
++				Properties: map[string]tool.PropertySchema{
++					"degrees": {Type: "number"},
++					"enabled": {Type: "boolean"},
++				},
++			},
++		}},
++	}
++
++	var got loop.Response
++	client.Chat(context.Background(), req, func(resp loop.Response) error {
++		got = resp
++		return nil
++	})
++
++	if len(got.ToolCalls) != 1 {
++		t.Fatalf("got %d tool calls, want 1", len(got.ToolCalls))
++	}
++	if v, ok := got.ToolCalls[0].Arguments["degrees"].(float64); !ok || v != 22 {
++		t.Errorf("degrees = %v (%T), want 22 (float64)", got.ToolCalls[0].Arguments["degrees"], got.ToolCalls[0].Arguments["degrees"])
++	}
++	if v, ok := got.ToolCalls[0].Arguments["enabled"].(bool); !ok || !v {
++		t.Errorf("enabled = %v (%T), want true (bool)", got.ToolCalls[0].Arguments["enabled"], got.ToolCalls[0].Arguments["enabled"])
++	}
++}
++
++func TestChat_RichSchemaInRequest(t *testing.T) {
++	var gotBody chatRequest
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		json.NewDecoder(r.Body).Decode(&gotBody)
++		json.NewEncoder(w).Encode(chatCompletion{
++			Choices: []choice{{Message: responseMessage{Content: "ok"}}},
++		})
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "hi"}},
++		Tools: []tool.ToolDef{{
++			Name: "create_event",
++			Parameters: tool.ParameterSchema{
++				Type:     "object",
++				Required: []string{"title", "priority"},
++				Properties: map[string]tool.PropertySchema{
++					"title": {Type: "string", Description: "Event title"},
++					"priority": {
++						Type:    "string",
++						Enum:    []any{"low", "medium", "high"},
++						Default: "medium",
++					},
++					"tags": {
++						Type: "array",
++						Items: &tool.PropertySchema{
++							Type: "string",
++						},
++					},
++					"location": {
++						Type: "object",
++						Properties: map[string]tool.PropertySchema{
++							"lat": {Type: "number"},
++							"lng": {Type: "number"},
++						},
++						Required: []string{"lat", "lng"},
++					},
++				},
++			},
++		}},
++	}
++
++	client.Chat(context.Background(), req, func(resp loop.Response) error { return nil })
++
++	if len(gotBody.Tools) != 1 {
++		t.Fatalf("got %d tools, want 1", len(gotBody.Tools))
++	}
++	props := gotBody.Tools[0].Function.Parameters.Properties
++
++	if len(props["priority"].Enum) != 3 {
++		t.Errorf("priority enum = %v, want 3 values", props["priority"].Enum)
++	}
++	if props["priority"].Default != "medium" {
++		t.Errorf("priority default = %v, want medium", props["priority"].Default)
++	}
++	if props["tags"].Items == nil || props["tags"].Items.Type != "string" {
++		t.Errorf("tags items = %v, want {type: string}", props["tags"].Items)
++	}
++	if props["location"].Properties["lat"].Type != "number" {
++		t.Errorf("location.lat type = %q, want number", props["location"].Properties["lat"].Type)
++	}
++	if len(props["location"].Required) != 2 {
++		t.Errorf("location required = %v, want [lat lng]", props["location"].Required)
++	}
++}
++
++func TestChat_ToolsSentInRequest(t *testing.T) {
++	var gotBody chatRequest
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		json.NewDecoder(r.Body).Decode(&gotBody)
++		json.NewEncoder(w).Encode(chatCompletion{
++			Choices: []choice{{Message: responseMessage{Content: "ok"}}},
++		})
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "hi"}},
++		Tools: []tool.ToolDef{{
++			Name:        "search",
++			Description: "Search the web",
++			Parameters: tool.ParameterSchema{
++				Type:     "object",
++				Required: []string{"query"},
++				Properties: map[string]tool.PropertySchema{
++					"query": {Type: "string", Description: "Search query"},
++					"limit": {Type: "number", Description: "Max results"},
++				},
++			},
++		}},
++	}
++
++	client.Chat(context.Background(), req, func(resp loop.Response) error { return nil })
++
++	if len(gotBody.Tools) != 1 {
++		t.Fatalf("got %d tools, want 1", len(gotBody.Tools))
++	}
++	if gotBody.Tools[0].Type != "function" {
++		t.Errorf("type = %q, want function", gotBody.Tools[0].Type)
++	}
++	if gotBody.Tools[0].Function.Name != "search" {
++		t.Errorf("name = %q, want search", gotBody.Tools[0].Function.Name)
++	}
++	if len(gotBody.Tools[0].Function.Parameters.Required) != 1 {
++		t.Errorf("required = %v", gotBody.Tools[0].Function.Parameters.Required)
++	}
++	if gotBody.Tools[0].Function.Parameters.Properties["query"].Type != "string" {
++		t.Errorf("query type = %q", gotBody.Tools[0].Function.Parameters.Properties["query"].Type)
++	}
++}
++
++func TestChat_APIError(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusUnauthorized)
++		w.Write([]byte(`{"error": {"message": "Incorrect API key"}}`))
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "bad-token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "hi"}},
++	}
++
++	err := client.Chat(context.Background(), req, func(resp loop.Response) error { return nil })
++	if err == nil {
++		t.Fatal("expected error for 401 response")
++	}
++}
++
++func TestChat_EmptyChoices(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		json.NewEncoder(w).Encode(chatCompletion{Choices: []choice{}})
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "hi"}},
++	}
++
++	var got loop.Response
++	client.Chat(context.Background(), req, func(resp loop.Response) error {
++		got = resp
++		return nil
++	})
++
++	if !got.Done {
++		t.Error("empty choices should return done=true")
++	}
++	if got.Content != "" {
++		t.Errorf("content = %q, want empty", got.Content)
++	}
++}
++
++func TestChat_ToolCallIDs(t *testing.T) {
++	var gotBody chatRequest
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		json.NewDecoder(r.Body).Decode(&gotBody)
++		json.NewEncoder(w).Encode(chatCompletion{
++			Choices: []choice{{Message: responseMessage{Content: "ok"}}},
++		})
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model: "gpt-4o",
++		Messages: []loop.Message{
++			{Role: "user", Content: "search for go"},
++			{Role: "assistant", ToolCalls: []loop.ToolCall{
++				{Name: "search", Arguments: map[string]any{"q": "go"}},
++			}},
++			{Role: "tool", Content: "results: golang.org"},
++		},
++	}
++
++	client.Chat(context.Background(), req, func(resp loop.Response) error { return nil })
++
++	assistantMsg := gotBody.Messages[1]
++	if len(assistantMsg.ToolCalls) != 1 {
++		t.Fatalf("got %d tool calls, want 1", len(assistantMsg.ToolCalls))
++	}
++	if assistantMsg.ToolCalls[0].ID == "" {
++		t.Error("tool call ID should not be empty")
++	}
++
++	toolMsg := gotBody.Messages[2]
++	if toolMsg.ToolCallID == "" {
++		t.Error("tool_call_id should not be empty")
++	}
++	if toolMsg.ToolCallID != assistantMsg.ToolCalls[0].ID {
++		t.Errorf("tool_call_id %q doesn't match call ID %q", toolMsg.ToolCallID, assistantMsg.ToolCalls[0].ID)
++	}
++}
++
++func TestChat_MaxTokensFromOptions(t *testing.T) {
++	var gotBody chatRequest
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		json.NewDecoder(r.Body).Decode(&gotBody)
++		json.NewEncoder(w).Encode(chatCompletion{
++			Choices: []choice{{Message: responseMessage{Content: "ok"}}},
++		})
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "hi"}},
++		Options:  map[string]any{"max_tokens": 500},
++	}
++
++	client.Chat(context.Background(), req, func(resp loop.Response) error { return nil })
++
++	if gotBody.MaxTokens != 500 {
++		t.Errorf("max_tokens = %d, want 500", gotBody.MaxTokens)
++	}
++}
+diff --git a/openai/sse.go b/openai/sse.go
+new file mode 100644
+index 0000000..aa7438d
+--- /dev/null
++++ b/openai/sse.go
+@@ -0,0 +1,80 @@
++package openai
++
++import (
++	"bufio"
++	"encoding/json"
++	"fmt"
++	"io"
++	"strings"
++)
++
++// sseEvent is a parsed SSE event from a streaming chat completion response.
++type sseEvent struct {
++	Delta streamDelta
++	Done  bool
++}
++
++// streamDelta is the delta object from a streaming chunk.
++type streamDelta struct {
++	Content          string           `json:"content"`
++	ReasoningContent string           `json:"reasoning_content"`
++	ToolCalls        []streamToolCall `json:"tool_calls"`
++}
++
++// streamToolCall is a tool call delta in a streaming chunk.
++type streamToolCall struct {
++	Index    int                    `json:"index"`
++	ID       string                 `json:"id"`
++	Type     string                 `json:"type"`
++	Function streamToolCallFunction `json:"function"`
++}
++
++// streamToolCallFunction holds the incremental function name and arguments.
++type streamToolCallFunction struct {
++	Name      string `json:"name"`
++	Arguments string `json:"arguments"`
++}
++
++// streamChunk is the wire format for a single SSE data line.
++type streamChunk struct {
++	Choices []streamChoice `json:"choices"`
++}
++
++// streamChoice wraps the delta in the OpenAI-compatible format.
++type streamChoice struct {
++	Delta streamDelta `json:"delta"`
++}
++
++// parseSSE reads SSE data lines from r and calls fn for each parsed event.
++// It handles the [DONE] sentinel and skips non-data lines.
++func parseSSE(r io.Reader, fn func(sseEvent) error) error {
++	scanner := bufio.NewScanner(r)
++	for scanner.Scan() {
++		line := scanner.Text()
++
++		if !strings.HasPrefix(line, "data: ") {
++			continue
++		}
++
++		data := strings.TrimPrefix(line, "data: ")
++
++		if data == "[DONE]" {
++			return fn(sseEvent{Done: true})
++		}
++
++		var chunk streamChunk
++		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
++			return fmt.Errorf("openai: parse SSE chunk: %w", err)
++		}
++
++		if len(chunk.Choices) == 0 {
++			continue
++		}
++
++		if err := fn(sseEvent{Delta: chunk.Choices[0].Delta}); err != nil {
++			return err
++		}
++	}
++
++	return scanner.Err()
++}
+diff --git a/openai/stream_test.go b/openai/stream_test.go
+new file mode 100644
+index 0000000..2549d5a
+--- /dev/null
++++ b/openai/stream_test.go
+@@ -0,0 +1,265 @@
++package openai
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	loop "github.com/benaskins/axon-loop"
++	tool "github.com/benaskins/axon-tool"
++)
++
++func sseServer(lines ...string) *httptest.Server {
++	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.Header().Set("Content-Type", "text/event-stream")
++		for _, line := range lines {
++			fmt.Fprintf(w, "data: %s\n\n", line)
++		}
++	}))
++}
++
++func TestChat_StreamContentTokens(t *testing.T) {
++	server := sseServer(
++		`{"choices":[{"delta":{"content":"Hello"}}]}`,
++		`{"choices":[{"delta":{"content":" world"}}]}`,
++		"[DONE]",
++	)
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "hi"}},
++		Stream:   true,
++	}
++
++	var tokens []string
++	var gotDone bool
++	err := client.Chat(context.Background(), req, func(resp loop.Response) error {
++		if resp.Content != "" {
++			tokens = append(tokens, resp.Content)
++		}
++		if resp.Done {
++			gotDone = true
++		}
++		return nil
++	})
++	if err != nil {
++		t.Fatalf("Chat error: %v", err)
++	}
++	if got := strings.Join(tokens, ""); got != "Hello world" {
++		t.Errorf("content = %q, want %q", got, "Hello world")
++	}
++	if !gotDone {
++		t.Error("expected done")
++	}
++}
++
++func TestChat_StreamThinking(t *testing.T) {
++	server := sseServer(
++		`{"choices":[{"delta":{"reasoning_content":"Think"}}]}`,
++		`{"choices":[{"delta":{"reasoning_content":"ing"}}]}`,
++		`{"choices":[{"delta":{"content":"Answer"}}]}`,
++		"[DONE]",
++	)
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "o3",
++		Messages: []loop.Message{{Role: "user", Content: "hi"}},
++		Stream:   true,
++	}
++
++	var thinking, content []string
++	err := client.Chat(context.Background(), req, func(resp loop.Response) error {
++		if resp.Thinking != "" {
++			thinking = append(thinking, resp.Thinking)
++		}
++		if resp.Content != "" {
++			content = append(content, resp.Content)
++		}
++		return nil
++	})
++	if err != nil {
++		t.Fatalf("Chat error: %v", err)
++	}
++	if got := strings.Join(thinking, ""); got != "Thinking" {
++		t.Errorf("thinking = %q, want %q", got, "Thinking")
++	}
++	if got := strings.Join(content, ""); got != "Answer" {
++		t.Errorf("content = %q, want %q", got, "Answer")
++	}
++}
++
++func TestChat_StreamStructuredToolCalls(t *testing.T) {
++	server := sseServer(
++		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}`,
++		`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\":"}}]}}]}`,
++		`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Sydney\"}"}}]}}]}`,
++		"[DONE]",
++	)
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "weather?"}},
++		Stream:   true,
++		Tools: []tool.ToolDef{{
++			Name: "get_weather",
++			Parameters: tool.ParameterSchema{
++				Type: "object",
++				Properties: map[string]tool.PropertySchema{
++					"city": {Type: "string"},
++				},
++			},
++		}},
++	}
++
++	var responses []loop.Response
++	err := client.Chat(context.Background(), req, func(resp loop.Response) error {
++		responses = append(responses, resp)
++		return nil
++	})
++	if err != nil {
++		t.Fatalf("Chat error: %v", err)
++	}
++
++	var toolCalls []loop.ToolCall
++	for _, r := range responses {
++		toolCalls = append(toolCalls, r.ToolCalls...)
++	}
++	if len(toolCalls) != 1 {
++		t.Fatalf("got %d tool calls, want 1", len(toolCalls))
++	}
++	if toolCalls[0].Name != "get_weather" {
++		t.Errorf("name = %q, want get_weather", toolCalls[0].Name)
++	}
++	if toolCalls[0].Arguments["city"] != "Sydney" {
++		t.Errorf("city = %v, want Sydney", toolCalls[0].Arguments["city"])
++	}
++}
++
++func TestChat_StreamMultipleToolCalls(t *testing.T) {
++	server := sseServer(
++		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"search","arguments":""}}]}}]}`,
++		`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"q\":\"go\"}"}}]}}]}`,
++		`{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_1","type":"function","function":{"name":"search","arguments":""}}]}}]}`,
++		`{"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"q\":\"rust\"}"}}]}}]}`,
++		"[DONE]",
++	)
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "search"}},
++		Stream:   true,
++	}
++
++	var toolCalls []loop.ToolCall
++	err := client.Chat(context.Background(), req, func(resp loop.Response) error {
++		toolCalls = append(toolCalls, resp.ToolCalls...)
++		return nil
++	})
++	if err != nil {
++		t.Fatalf("Chat error: %v", err)
++	}
++	if len(toolCalls) != 2 {
++		t.Fatalf("got %d tool calls, want 2", len(toolCalls))
++	}
++	if toolCalls[0].Arguments["q"] != "go" {
++		t.Errorf("first q = %v, want go", toolCalls[0].Arguments["q"])
++	}
++	if toolCalls[1].Arguments["q"] != "rust" {
++		t.Errorf("second q = %v, want rust", toolCalls[1].Arguments["q"])
++	}
++}
++
++func TestChat_StreamSetsStreamInRequest(t *testing.T) {
++	var gotBody chatRequest
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		json.NewDecoder(r.Body).Decode(&gotBody)
++		w.Header().Set("Content-Type", "text/event-stream")
++		fmt.Fprintf(w, "data: %s\n\n", `{"choices":[{"delta":{"content":"ok"}}]}`)
++		fmt.Fprintf(w, "data: [DONE]\n\n")
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "hi"}},
++		Stream:   true,
++	}
++
++	client.Chat(context.Background(), req, func(resp loop.Response) error { return nil })
++
++	if gotBody.Stream == nil || !*gotBody.Stream {
++		t.Error("stream should be true in request body")
++	}
++}
++
++func TestChat_StreamNormalizesToolCallArgs(t *testing.T) {
++	server := sseServer(
++		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_0","type":"function","function":{"name":"set_temp","arguments":"{\"degrees\":\"22\"}"}}]}}]}`,
++		"[DONE]",
++	)
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "set temp"}},
++		Stream:   true,
++		Tools: []tool.ToolDef{{
++			Name: "set_temp",
++			Parameters: tool.ParameterSchema{
++				Type: "object",
++				Properties: map[string]tool.PropertySchema{
++					"degrees": {Type: "number"},
++				},
++			},
++		}},
++	}
++
++	var toolCalls []loop.ToolCall
++	err := client.Chat(context.Background(), req, func(resp loop.Response) error {
++		toolCalls = append(toolCalls, resp.ToolCalls...)
++		return nil
++	})
++	if err != nil {
++		t.Fatalf("Chat error: %v", err)
++	}
++	if len(toolCalls) != 1 {
++		t.Fatalf("got %d tool calls, want 1", len(toolCalls))
++	}
++	if v, ok := toolCalls[0].Arguments["degrees"].(float64); !ok || v != 22 {
++		t.Errorf("degrees = %v (%T), want 22 (float64)", toolCalls[0].Arguments["degrees"], toolCalls[0].Arguments["degrees"])
++	}
++}
++
++func TestChat_StreamAPIError(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		w.WriteHeader(http.StatusTooManyRequests)
++		w.Write([]byte(`{"error": {"message": "Rate limit exceeded"}}`))
++	}))
++	defer server.Close()
++
++	client := NewClient(server.URL, "token")
++	req := &loop.Request{
++		Model:    "gpt-4o",
++		Messages: []loop.Message{{Role: "user", Content: "hi"}},
++		Stream:   true,
++	}
++
++	err := client.Chat(context.Background(), req, func(resp loop.Response) error { return nil })
++	if err == nil {
++		t.Fatal("expected error for 429 response")
++	}
++}
+-- 
+2.43.0
+
