@@ -51,9 +51,9 @@ lamina (at rest)                    aurelia (in flight)
               axon (building material)
 ```
 
-- **lamina** manages the workspace as source — repo status, dependency graphs, testing, releases
-- **aurelia** supervises the system in flight — process lifecycle, health checks, service dependencies
-- **axon** is the building material — a suite of Go libraries you assemble services from
+- **lamina** manages the workspace as source: repo status, dependency graphs, testing, releases
+- **aurelia** supervises the system in flight: process lifecycle, health checks, service dependencies
+- **axon** is the building material: a suite of Go libraries you assemble services from
 
 ## Dependency Graph
 
@@ -148,9 +148,10 @@ go vet ./...        # Lint
 lamina/
 ├── cmd/lamina/         # CLI source
 ├── skills/             # Embedded Claude Code skills
-│   ├── embed.go        # go:embed for skill files
-│   ├── lamina-workspace/
-│   └── repo-archive/
+│   ├── debug-lamina/   # Extends /debug
+│   ├── deploy-lamina/  # Extends /deploy
+│   ├── ground-lamina/  # Extends /ground
+│   └── verify-lamina/  # Extends /verify
 ├── examples/
 │   └── chat/           # Example chat service (axon + axon-loop + axon-talk)
 ├── plans/              # Evaluation plans (YAML)
