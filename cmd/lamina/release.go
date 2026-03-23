@@ -40,13 +40,14 @@ Examples:
   lamina release axon v0.4.0
   lamina release axon-chat v0.2.0
   lamina release --all v0.1.0       Tag all untagged modules`,
-	Args: cobra.RangeArgs(1, 2),
+	Args: cobra.RangeArgs(0, 2),
 	RunE: runRelease,
 }
 
 func init() {
 	releaseCmd.Flags().Bool("all", false, "Release all modules that lack the specified version tag")
 	releaseCmd.Flags().Bool("dry-run", false, "Show what would be done without doing it")
+	releaseCmd.Flags().Bool("backfill-notes", false, "Create GitHub releases for existing tags that lack them")
 	rootCmd.AddCommand(releaseCmd)
 }
 
@@ -58,6 +59,14 @@ func runRelease(cmd *cobra.Command, args []string) error {
 
 	allFlag, _ := cmd.Flags().GetBool("all")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	backfill, _ := cmd.Flags().GetBool("backfill-notes")
+
+	if backfill {
+		if len(args) > 0 {
+			return fmt.Errorf("--backfill-notes takes no arguments")
+		}
+		return backfillReleaseNotes(root, dryRun)
+	}
 
 	if allFlag {
 		if len(args) != 1 {
@@ -417,6 +426,85 @@ func runDocReview(ctx context.Context, dir, name, oldTag, newTag string, dryRun 
 			_ = runGit(dir, "push", "origin", "main")
 		}
 	}
+}
+
+func backfillReleaseNotes(root string, dryRun bool) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+
+	var created int
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
+			continue
+		}
+
+		// Get all tags in chronological order
+		tagsOut := gitOutput(dir, "tag", "--sort=version:refname")
+		if tagsOut == "" {
+			continue
+		}
+		tags := strings.Split(tagsOut, "\n")
+
+		// Check which tags have GitHub releases
+		existingReleases := gitOutput(dir, "ls-remote", "--tags", "origin")
+		_ = existingReleases // tags exist remotely, but we need to check gh releases
+
+		for i, tag := range tags {
+			tag = strings.TrimSpace(tag)
+			if tag == "" || !semverRe.MatchString(tag) {
+				continue
+			}
+
+			// Check if GitHub release exists
+			ghCheck := exec.Command("gh", "release", "view", tag)
+			ghCheck.Dir = dir
+			if err := ghCheck.Run(); err == nil {
+				continue // release already exists
+			}
+
+			// Generate notes from commit log
+			var logRange string
+			if i > 0 {
+				logRange = tags[i-1] + ".." + tag
+			} else {
+				logRange = tag
+			}
+			commitLog := gitOutput(dir, "log", "--oneline", logRange)
+			notes := generateReleaseNotes(tag, commitLog)
+
+			if dryRun {
+				fmt.Printf("[dry-run] would create release %s/%s\n", e.Name(), tag)
+				continue
+			}
+
+			fmt.Printf("Creating release %s/%s...\n", e.Name(), tag)
+			ghCmd := exec.Command("gh", "release", "create", tag, "--title", tag, "--notes", notes)
+			ghCmd.Dir = dir
+			ghCmd.Stdout = os.Stdout
+			ghCmd.Stderr = os.Stderr
+			if err := ghCmd.Run(); err != nil {
+				fmt.Printf("  warning: failed to create release %s/%s: %v\n", e.Name(), tag, err)
+				continue
+			}
+			created++
+		}
+	}
+
+	if created > 0 {
+		fmt.Printf("\nCreated %d GitHub releases\n", created)
+	} else if !dryRun {
+		fmt.Println("All tags already have GitHub releases")
+	}
+	return nil
 }
 
 func newLLMClient(provider, apiKey string) (talk.LLMClient, error) {
