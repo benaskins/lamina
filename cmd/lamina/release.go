@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,12 @@ import (
 	"regexp"
 	"strings"
 
+	talk "github.com/benaskins/axon-talk"
+	"github.com/benaskins/axon-talk/anthropic"
+	"github.com/benaskins/axon-talk/ollama"
+	"github.com/benaskins/axon-talk/openai"
+	"github.com/benaskins/lamina/internal/config"
+	"github.com/benaskins/lamina/internal/docreview"
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
 )
@@ -59,7 +66,7 @@ func runRelease(cmd *cobra.Command, args []string) error {
 		if err := validateVersion(args[0]); err != nil {
 			return err
 		}
-		return releaseAll(root, args[0], dryRun)
+		return releaseAll(cmd.Context(), root, args[0], dryRun)
 	}
 
 	if len(args) != 2 {
@@ -68,10 +75,10 @@ func runRelease(cmd *cobra.Command, args []string) error {
 	if err := validateVersion(args[1]); err != nil {
 		return err
 	}
-	return releaseOne(root, args[0], args[1], dryRun)
+	return releaseOne(cmd.Context(), root, args[0], args[1], dryRun)
 }
 
-func releaseOne(root, name, version string, dryRun bool) error {
+func releaseOne(ctx context.Context, root, name, version string, dryRun bool) error {
 	dir := filepath.Join(root, name)
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		return fmt.Errorf("%q is not a git repo in the workspace", name)
@@ -110,6 +117,7 @@ func releaseOne(root, name, version string, dryRun bool) error {
 		commitLog := gitOutput(dir, "log", "--oneline", logRange)
 		notes := generateReleaseNotes(version, commitLog)
 		fmt.Printf("[dry-run] release notes:\n%s\n", notes)
+		runDocReview(ctx, dir, name, prevTag, version, true)
 		return nil
 	}
 
@@ -146,6 +154,9 @@ func releaseOne(root, name, version string, dryRun bool) error {
 		fmt.Printf("  warning: gh release create failed: %v\n", err)
 	}
 
+	// Run LLM doc review if configured
+	runDocReview(ctx, dir, name, prevTag, version, false)
+
 	// Refresh getlamina.ai with updated versions and deps
 	refreshScript := filepath.Join(root, "bin", "refresh-getlamina")
 	if _, err := os.Stat(refreshScript); err == nil {
@@ -162,7 +173,7 @@ func releaseOne(root, name, version string, dryRun bool) error {
 	return nil
 }
 
-func releaseAll(root, version string, dryRun bool) error {
+func releaseAll(ctx context.Context, root, version string, dryRun bool) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return err
@@ -208,7 +219,7 @@ func releaseAll(root, version string, dryRun bool) error {
 	ordered := topoSort(modules)
 
 	for _, name := range ordered {
-		if err := releaseOne(root, name, version, dryRun); err != nil {
+		if err := releaseOne(ctx, root, name, version, dryRun); err != nil {
 			return err
 		}
 	}
@@ -351,6 +362,74 @@ func generateReleaseNotes(version, commitLog string) string {
 	}
 
 	return b.String()
+}
+
+func runDocReview(ctx context.Context, dir, name, oldTag, newTag string, dryRun bool) {
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil || !cfg.LLMConfigured() {
+		return
+	}
+
+	apiKey, err := cfg.LLM.APIKey()
+	if err != nil {
+		fmt.Printf("  warning: LLM configured but API key unavailable: %v\n", err)
+		return
+	}
+
+	llm, err := newLLMClient(cfg.LLM.Provider, apiKey)
+	if err != nil {
+		fmt.Printf("  warning: could not create LLM client: %v\n", err)
+		return
+	}
+
+	var writer docreview.Writer
+	if dryRun {
+		writer = &docreview.DryRunWriter{Dir: dir}
+	} else {
+		writer = &docreview.FileWriter{Dir: dir}
+	}
+
+	engine := docreview.NewEngine(llm, cfg.LLM.Model, dir, writer)
+
+	fmt.Printf("\nReviewing documentation for %s...\n", name)
+	_, err = engine.Review(ctx, name, oldTag, newTag, func(token string) {
+		fmt.Print(token)
+	})
+	if err != nil {
+		fmt.Printf("\n  warning: doc review failed: %v\n", err)
+		return
+	}
+	fmt.Println()
+
+	if dryRun {
+		if dw, ok := writer.(*docreview.DryRunWriter); ok && len(dw.Changes) > 0 {
+			fmt.Println("\n[dry-run] proposed doc changes:")
+			for _, c := range dw.Changes {
+				fmt.Printf("  would write %s (%d bytes)\n", c.Path, len(c.Content))
+			}
+		}
+	} else {
+		// Check if docs were modified and commit
+		if st := gitOutput(dir, "status", "--porcelain"); st != "" {
+			fmt.Printf("Committing doc updates for %s...\n", name)
+			_ = runGit(dir, "add", "README.md", "AGENTS.md")
+			_ = runGit(dir, "commit", "-m", fmt.Sprintf("docs: update documentation after %s release", newTag))
+			_ = runGit(dir, "push", "origin", "main")
+		}
+	}
+}
+
+func newLLMClient(provider, apiKey string) (talk.LLMClient, error) {
+	switch provider {
+	case "anthropic":
+		return anthropic.NewClient("https://api.anthropic.com", apiKey), nil
+	case "ollama":
+		return ollama.NewClientFromEnvironment()
+	case "openai":
+		return openai.NewClient("https://api.openai.com", apiKey), nil
+	default:
+		return nil, fmt.Errorf("unsupported LLM provider %q (supported: anthropic, ollama, openai)", provider)
+	}
 }
 
 func runGit(dir string, args ...string) error {
