@@ -56,24 +56,21 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	var warns, fails int
 	for _, d := range diagnostics {
-		icon := "ok"
 		switch d.Status {
 		case "warn":
-			icon = "!!"
+			fmt.Printf("  [!!  ] %-25s %s\n", d.Name, d.Message)
 			warns++
 		case "fail":
-			icon = "FAIL"
+			fmt.Printf("  [FAIL] %-25s %s\n", d.Name, d.Message)
 			fails++
 		}
-		fmt.Printf("  [%-4s] %-25s %s\n", icon, d.Name, d.Message)
 	}
 
-	fmt.Println()
 	if fails > 0 {
-		fmt.Printf("%d checks failed, %d warnings\n", fails, warns)
+		fmt.Printf("\n%d checks failed, %d warnings\n", fails, warns)
 		return fmt.Errorf("%d health check(s) failed", fails)
 	} else if warns > 0 {
-		fmt.Printf("All checks passed (%d warnings)\n", warns)
+		fmt.Printf("\nAll checks passed (%d warnings)\n", warns)
 	} else {
 		fmt.Printf("All %d checks passed\n", len(diagnostics))
 	}
