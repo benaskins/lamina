@@ -118,20 +118,41 @@ third-party clients or separate front-ends.
 
 ### 3.1 Event Sourcing & Right to Erasure
 
-`axon-fact` stores immutable event streams. Under GDPR Article 17 (right to
-erasure) and similar regulations, you must be able to delete or anonymise
-personal data on request. An append-only event store with no crypto-shredding
-or tombstone mechanism makes this extremely difficult.
+`axon-fact` stores immutable event streams (`axon-fact/migrations/001_create_events.sql`).
+The schema has no DELETE/UPDATE capability — events are append-only with a
+`(stream, sequence)` primary key and JSONB `data`/`metadata` columns. Neither
+`axon-fact` nor any other module implements `DeleteEvent()`, `AnonymizeEvent()`,
+or `PurgeStream()`.
+
+Under GDPR Article 17 (right to erasure) and CCPA, you must be able to delete
+or anonymise personal data on request. An append-only event store with no
+crypto-shredding or tombstone mechanism makes this extremely difficult.
+
+**Fix**: Add `AnonymizeStream()` to the `EventStore` interface, or implement
+crypto-shredding (encrypt PII with per-user keys; destroy the key to "erase").
 
 ### 3.2 PII in Long-Term Memory
 
-`axon-memo` extracts and persists memory fragments from conversations. These
-will inevitably contain PII (names, preferences, potentially health or
-financial details). There is no:
+`axon-memo/extractor.go:127-178` builds extraction prompts that include full
+conversation history, timestamps, roles, and the agent's system prompt. The
+extracted memories — including emotional state analysis, relationship trust
+metrics (ability/benevolence/integrity scores), and raw conversation text —
+are stored as immutable events via `axon-fact`:
+
+```go
+// axon-memo/extractor.go:220
+emit(ctx, e.eventStore, stream, MemoryExtracted{
+    MemoryID, ConversationID, AgentSlug, UserID,
+    MemoryType, Content, Importance,
+})
+```
+
+There is no:
 
 - Classification of stored memories by sensitivity
 - Retention policy or automatic expiry
 - Mechanism to enumerate and delete a user's memories on request
+- Encryption of memory content at rest
 
 ### 3.3 Financial Data (axon-book)
 
@@ -146,7 +167,33 @@ secrets being logged, but there is no systematic **log scrubbing** or
 **redaction framework** to prevent accidental PII/token leakage as the
 codebase grows.
 
-### 3.5 No Backup / Disaster Recovery Evidence
+### 3.5 NATS Transport Security
+
+`axon-nats/eventbus.go` accepts a `*nats.Conn` with no TLS configuration in the
+wrapper. Transport security depends entirely on the caller configuring TLS on
+the NATS connection. No documentation guides operators on the required NATS
+security setup.
+
+### 3.6 Deploy Gate Bypass Risk
+
+`axon-gate/handler.go:164` — username-based access control skips the check if
+either the approval's `Username` or the session's username is empty:
+
+```go
+if username != "" && approval.Username != "" && username != approval.Username {
+    // reject
+}
+```
+
+An approval created without a `Username` field can be approved by any
+authenticated user. This is by design (allows "any authenticated user"
+fallback) but needs explicit documentation and should be opt-in for
+security-sensitive deployments.
+
+Additionally, approval decisions are not written to an immutable audit log —
+only errors are logged via `slog`.
+
+### 3.7 No Backup / Disaster Recovery Evidence
 
 No backup configuration, snapshot strategy, or recovery runbook was found in
 the codebase or infrastructure configuration.
@@ -283,3 +330,9 @@ The following are already well-implemented:
 - **Wire proxy**: HTTPS enforced for non-localhost, token authentication
 - **Dependency hygiene**: Exact version pins, go.sum integrity, no replace directives
 - **Process supervision**: Aurelia validates service specs, rate-limits its API, uses 0700 permissions
+- **Process isolation**: Native driver uses `Setpgid: true` for process group isolation; commands split on whitespace (no shell interpolation)
+- **Deploy gate**: Two-factor approval (random token + session identity), constant-time token comparison, time-limited grants, idempotent resolution
+- **Audit trail**: Aurelia maintains append-only audit log at `~/.aurelia/audit.log` (NDJSON, 0600 perms) covering all secret operations
+- **Analytics logging**: `axon-chat/analytics.go` logs only semantic events (token counts, duration) — no message content
+- **Error handling**: Generic errors returned to HTTP clients; detailed errors logged server-side only
+- **Input validation**: Version strings validated against semver regex; injection attempts tested (`v1.0.0; rm -rf /`)
