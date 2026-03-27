@@ -54,7 +54,10 @@ func runTest(cmd *cobra.Command, args []string) error {
 
 	var results []testResult
 	for _, repo := range repos {
-		dir := filepath.Join(root, repo)
+		dir, _ := resolveRepoDir(root, repo)
+		if dir == "" {
+			dir = filepath.Join(root, repo)
+		}
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 			results = append(results, testResult{
 				Repo:   repo,

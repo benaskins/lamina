@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,6 +32,11 @@ func init() {
 func runHeal(cmd *cobra.Command, args []string) error {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 
+	root, err := workspaceRoot()
+	if err != nil {
+		return err
+	}
+
 	diags, err := loadDiagnostics()
 	if err != nil {
 		return err
@@ -53,11 +59,11 @@ func runHeal(cmd *cobra.Command, args []string) error {
 	for _, d := range actions {
 		switch d.Kind {
 		case "untagged":
-			if err := healUntagged(d, dryRun); err != nil {
+			if err := healUntagged(cmd.Context(), root, d, dryRun); err != nil {
 				fmt.Printf("  FAIL %s: %v\n", d.Name, err)
 			}
 		case "ahead-of-tag":
-			if err := healAheadOfTag(d, dryRun); err != nil {
+			if err := healAheadOfTag(cmd.Context(), root, d, dryRun); err != nil {
 				fmt.Printf("  FAIL %s: %v\n", d.Name, err)
 			}
 		case "agent-docs-missing":
@@ -94,34 +100,23 @@ func loadDiagnostics() ([]Diagnostic, error) {
 	return runDiagnostics(root), nil
 }
 
-func healUntagged(d Diagnostic, dryRun bool) error {
+// repoNameFromDiagnostic extracts the repo name from a diagnostic Name field
+// (e.g., "imago tags" → "imago").
+func repoNameFromDiagnostic(d Diagnostic) string {
+	return strings.TrimSuffix(d.Name, " tags")
+}
+
+func healUntagged(ctx context.Context, root string, d Diagnostic, dryRun bool) error {
 	if d.Dir == "" {
 		return fmt.Errorf("no directory in diagnostic")
 	}
 
-	// Check for dirty state
-	if status := gitOutput(d.Dir, "status", "--porcelain"); status != "" {
-		return fmt.Errorf("has uncommitted changes — commit first")
-	}
-
 	tag := "v0.1.0"
-	if dryRun {
-		fmt.Printf("  [dry-run] would tag %s at %s and push\n", d.Name, tag)
-		return nil
-	}
-
-	fmt.Printf("  Tagging %s %s...\n", d.Name, tag)
-	if err := runGit(d.Dir, "tag", tag); err != nil {
-		return fmt.Errorf("git tag: %w", err)
-	}
-	if err := runGit(d.Dir, "push", "origin", tag); err != nil {
-		return fmt.Errorf("git push: %w", err)
-	}
-	fmt.Printf("  Released %s %s\n", d.Name, tag)
-	return nil
+	name := repoNameFromDiagnostic(d)
+	return releaseOne(ctx, root, name, tag, dryRun)
 }
 
-func healAheadOfTag(d Diagnostic, dryRun bool) error {
+func healAheadOfTag(ctx context.Context, root string, d Diagnostic, dryRun bool) error {
 	if d.Dir == "" {
 		return fmt.Errorf("no directory in diagnostic")
 	}
@@ -129,30 +124,13 @@ func healAheadOfTag(d Diagnostic, dryRun bool) error {
 		return fmt.Errorf("no latest tag in diagnostic")
 	}
 
-	// Check for dirty state
-	if status := gitOutput(d.Dir, "status", "--porcelain"); status != "" {
-		return fmt.Errorf("has uncommitted changes — commit first")
-	}
-
 	nextTag, err := bumpPatch(d.LatestTag)
 	if err != nil {
 		return fmt.Errorf("computing next version: %w", err)
 	}
 
-	if dryRun {
-		fmt.Printf("  [dry-run] would tag %s at %s (was %s, %s commits ahead)\n", d.Name, nextTag, d.LatestTag, d.AheadCount)
-		return nil
-	}
-
-	fmt.Printf("  Tagging %s %s (was %s)...\n", d.Name, nextTag, d.LatestTag)
-	if err := runGit(d.Dir, "tag", nextTag); err != nil {
-		return fmt.Errorf("git tag: %w", err)
-	}
-	if err := runGit(d.Dir, "push", "origin", nextTag); err != nil {
-		return fmt.Errorf("git push: %w", err)
-	}
-	fmt.Printf("  Released %s %s\n", d.Name, nextTag)
-	return nil
+	name := repoNameFromDiagnostic(d)
+	return releaseOne(ctx, root, name, nextTag, dryRun)
 }
 
 const claudeMDPointer = "# CLAUDE.md\n\nRead [AGENTS.md](./AGENTS.md) for project context.\n"

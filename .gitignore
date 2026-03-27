@@ -1,9 +1,10 @@
 # Independent git repos — managed separately
 /aurelia/
-aurelia-core-infrastructure/
 axon/
 axon-*/
-imago/
+
+# Apps — independent git repos under apps/
+/apps/
 
 # Design docs (local working artifacts, not committed)
 docs/plans/

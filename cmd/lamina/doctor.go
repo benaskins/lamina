@@ -87,24 +87,47 @@ func runDiagnostics(root string) []Diagnostic {
 	return diags
 }
 
+// repoEntry is a name + directory pair found by scanning the workspace.
+type repoEntry struct {
+	name string
+	dir  string
+}
+
+// scanRepoEntries returns all git repos found at root level and under apps/.
+func scanRepoEntries(root string) []repoEntry {
+	var entries []repoEntry
+
+	scanDirs := []string{root}
+	appsDir := filepath.Join(root, "apps")
+	if _, err := os.Stat(appsDir); err == nil {
+		scanDirs = append(scanDirs, appsDir)
+	}
+
+	for _, scanDir := range scanDirs {
+		dirEntries, _ := os.ReadDir(scanDir)
+		for _, e := range dirEntries {
+			if !e.IsDir() {
+				continue
+			}
+			dir := filepath.Join(scanDir, e.Name())
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+				continue
+			}
+			entries = append(entries, repoEntry{name: e.Name(), dir: dir})
+		}
+	}
+	return entries
+}
+
 func checkRepoHealth(root string) []Diagnostic {
 	var diags []Diagnostic
-	entries, _ := os.ReadDir(root)
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		dir := filepath.Join(root, e.Name())
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-			continue
-		}
-
-		status := gitOutput(dir, "status", "--porcelain")
+	for _, re := range scanRepoEntries(root) {
+		status := gitOutput(re.dir, "status", "--porcelain")
 		if status == "" {
-			diags = append(diags, Diagnostic{Kind: "repo-clean", Name: e.Name(), Status: "ok", Message: "clean", Dir: dir})
+			diags = append(diags, Diagnostic{Kind: "repo-clean", Name: re.name, Status: "ok", Message: "clean", Dir: re.dir})
 		} else {
 			lines := strings.Count(status, "\n") + 1
-			diags = append(diags, Diagnostic{Kind: "repo-dirty", Name: e.Name(), Status: "warn", Message: fmt.Sprintf("%d uncommitted changes", lines), Dir: dir})
+			diags = append(diags, Diagnostic{Kind: "repo-dirty", Name: re.name, Status: "warn", Message: fmt.Sprintf("%d uncommitted changes", lines), Dir: re.dir})
 		}
 	}
 	return diags
@@ -158,40 +181,32 @@ func checkReplaceDirectives(root string) []Diagnostic {
 
 func checkUntaggedModules(root string) []Diagnostic {
 	var diags []Diagnostic
-	entries, _ := os.ReadDir(root)
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		dir := filepath.Join(root, e.Name())
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
+	for _, re := range scanRepoEntries(root) {
+		if _, err := os.Stat(filepath.Join(re.dir, "go.mod")); err != nil {
 			continue
 		}
 
-		latestTag := gitOutput(dir, "describe", "--tags", "--abbrev=0")
+		latestTag := gitOutput(re.dir, "describe", "--tags", "--abbrev=0")
 		if latestTag == "" {
 			diags = append(diags, Diagnostic{
-				Kind: "untagged", Name: e.Name() + " tags", Status: "warn",
-				Message: "no version tags", Dir: dir,
+				Kind: "untagged", Name: re.name + " tags", Status: "warn",
+				Message: "no version tags", Dir: re.dir,
 			})
 			continue
 		}
 
-		headAtTag := gitOutput(dir, "describe", "--exact-match", "--tags", "HEAD")
+		headAtTag := gitOutput(re.dir, "describe", "--exact-match", "--tags", "HEAD")
 		if headAtTag != "" {
 			diags = append(diags, Diagnostic{
-				Kind: "tag-current", Name: e.Name() + " tags", Status: "ok",
-				Message: fmt.Sprintf("HEAD at %s", latestTag), Dir: dir, LatestTag: latestTag,
+				Kind: "tag-current", Name: re.name + " tags", Status: "ok",
+				Message: fmt.Sprintf("HEAD at %s", latestTag), Dir: re.dir, LatestTag: latestTag,
 			})
 		} else {
-			ahead := gitOutput(dir, "rev-list", latestTag+"..HEAD", "--count")
+			ahead := gitOutput(re.dir, "rev-list", latestTag+"..HEAD", "--count")
 			diags = append(diags, Diagnostic{
-				Kind: "ahead-of-tag", Name: e.Name() + " tags", Status: "warn",
+				Kind: "ahead-of-tag", Name: re.name + " tags", Status: "warn",
 				Message: fmt.Sprintf("%s commits ahead of %s", ahead, latestTag),
-				Dir: dir, LatestTag: latestTag, AheadCount: ahead,
+				Dir: re.dir, LatestTag: latestTag, AheadCount: ahead,
 			})
 		}
 	}
@@ -208,12 +223,8 @@ func checkVersionConsistency(root string) []Diagnostic {
 	versions := make(map[string][]versionUse)
 
 	// Scan all repos' cmd/* subdirectories for service modules
-	entries, _ := os.ReadDir(root)
-	for _, repoEntry := range entries {
-		if !repoEntry.IsDir() {
-			continue
-		}
-		cmdDir := filepath.Join(root, repoEntry.Name(), "cmd")
+	for _, re := range scanRepoEntries(root) {
+		cmdDir := filepath.Join(re.dir, "cmd")
 		svcEntries, err := os.ReadDir(cmdDir)
 		if err != nil {
 			continue
@@ -276,40 +287,31 @@ func checkVersionConsistency(root string) []Diagnostic {
 
 func checkAgentDocs(root string) []Diagnostic {
 	var diags []Diagnostic
-	entries, _ := os.ReadDir(root)
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		dir := filepath.Join(root, e.Name())
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-			continue
-		}
-
+	for _, re := range scanRepoEntries(root) {
 		hasAgents := false
 		hasClaude := false
 		claudePoints := false
 
-		if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err == nil {
+		if _, err := os.Stat(filepath.Join(re.dir, "AGENTS.md")); err == nil {
 			hasAgents = true
 		}
-		if data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md")); err == nil {
+		if data, err := os.ReadFile(filepath.Join(re.dir, "CLAUDE.md")); err == nil {
 			hasClaude = true
 			claudePoints = strings.Contains(string(data), "AGENTS.md")
 		}
 
-		name := e.Name() + " docs"
+		name := re.name + " docs"
 		switch {
 		case hasAgents && hasClaude && claudePoints:
-			diags = append(diags, Diagnostic{Kind: "agent-docs-ok", Name: name, Status: "ok", Message: "AGENTS.md + CLAUDE.md", Dir: dir})
+			diags = append(diags, Diagnostic{Kind: "agent-docs-ok", Name: name, Status: "ok", Message: "AGENTS.md + CLAUDE.md", Dir: re.dir})
 		case !hasAgents && !hasClaude:
-			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "missing AGENTS.md and CLAUDE.md", Dir: dir})
+			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "missing AGENTS.md and CLAUDE.md", Dir: re.dir})
 		case !hasAgents:
-			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "missing AGENTS.md", Dir: dir})
+			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "missing AGENTS.md", Dir: re.dir})
 		case !hasClaude:
-			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "missing CLAUDE.md", Dir: dir})
+			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "missing CLAUDE.md", Dir: re.dir})
 		case !claudePoints:
-			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "CLAUDE.md does not reference AGENTS.md", Dir: dir})
+			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "CLAUDE.md does not reference AGENTS.md", Dir: re.dir})
 		}
 	}
 	return diags
@@ -317,26 +319,35 @@ func checkAgentDocs(root string) []Diagnostic {
 
 func findAllGoMods(root string) []string {
 	var goModPaths []string
-	entries, _ := os.ReadDir(root)
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		repoDir := filepath.Join(root, e.Name())
-		modPath := filepath.Join(repoDir, "go.mod")
-		if _, err := os.Stat(modPath); err == nil {
-			goModPaths = append(goModPaths, modPath)
-		}
-		// Scan cmd/* for nested service modules
-		cmdDir := filepath.Join(repoDir, "cmd")
-		if svcEntries, err := os.ReadDir(cmdDir); err == nil {
-			for _, se := range svcEntries {
-				if !se.IsDir() {
-					continue
-				}
-				svcMod := filepath.Join(cmdDir, se.Name(), "go.mod")
-				if _, err := os.Stat(svcMod); err == nil {
-					goModPaths = append(goModPaths, svcMod)
+
+	scanDirs := []string{root}
+	appsDir := filepath.Join(root, "apps")
+	if _, err := os.Stat(appsDir); err == nil {
+		scanDirs = append(scanDirs, appsDir)
+	}
+
+	for _, scanDir := range scanDirs {
+		entries, _ := os.ReadDir(scanDir)
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			dir := filepath.Join(scanDir, e.Name())
+			modPath := filepath.Join(dir, "go.mod")
+			if _, err := os.Stat(modPath); err == nil {
+				goModPaths = append(goModPaths, modPath)
+			}
+			// Scan cmd/* for nested service modules
+			cmdDir := filepath.Join(dir, "cmd")
+			if svcEntries, err := os.ReadDir(cmdDir); err == nil {
+				for _, se := range svcEntries {
+					if !se.IsDir() {
+						continue
+					}
+					svcMod := filepath.Join(cmdDir, se.Name(), "go.mod")
+					if _, err := os.Stat(svcMod); err == nil {
+						goModPaths = append(goModPaths, svcMod)
+					}
 				}
 			}
 		}

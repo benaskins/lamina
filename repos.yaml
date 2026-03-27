@@ -37,3 +37,9 @@ repos:
     url: https://github.com/benaskins/axon-tool.git
   - name: axon-wire
     url: https://github.com/benaskins/axon-wire.git
+  - name: imago
+    url: https://github.com/benaskins/imago.git
+    kind: app
+  - name: vita
+    url: https://github.com/benaskins/vita.git
+    kind: app

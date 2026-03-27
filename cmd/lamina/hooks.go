@@ -40,7 +40,7 @@ func runHooks(cmd *cobra.Command, args []string) error {
 		}
 		var installed, failed int
 		for _, r := range repos {
-			dir := filepath.Join(root, r.Name)
+			dir := repoDir(root, r)
 			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 				continue
 			}

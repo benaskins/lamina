@@ -28,7 +28,51 @@ func (l *LLM) APIKey() (string, error) {
 
 // Config holds lamina workspace configuration.
 type Config struct {
-	LLM *LLM `yaml:"llm,omitempty"`
+	LLM     *LLM    `yaml:"llm,omitempty"`
+	Release *Release `yaml:"release,omitempty"`
+}
+
+// Release configures release behaviour.
+type Release struct {
+	NotesProvider string `yaml:"notes_provider,omitempty"` // LLM provider for release notes (default: anthropic)
+	NotesModel    string `yaml:"notes_model,omitempty"`    // model for release notes (default: claude-haiku-4-5-20251001)
+	NotesAPIKeyEnv string `yaml:"notes_api_key_env,omitempty"` // env var for API key (default: same as llm.api_key_env)
+}
+
+// NotesProvider returns the configured provider or the default.
+func (c *Config) NotesProvider() string {
+	if c.Release != nil && c.Release.NotesProvider != "" {
+		return c.Release.NotesProvider
+	}
+	if c.LLM != nil && c.LLM.Provider != "" {
+		return c.LLM.Provider
+	}
+	return "anthropic"
+}
+
+// NotesModel returns the configured model or the default.
+func (c *Config) NotesModel() string {
+	if c.Release != nil && c.Release.NotesModel != "" {
+		return c.Release.NotesModel
+	}
+	return "claude-haiku-4-5-20251001"
+}
+
+// NotesAPIKey returns the API key for the release notes provider.
+func (c *Config) NotesAPIKey() (string, error) {
+	envVar := ""
+	if c.Release != nil && c.Release.NotesAPIKeyEnv != "" {
+		envVar = c.Release.NotesAPIKeyEnv
+	} else if c.LLM != nil && c.LLM.APIKeyEnv != "" {
+		envVar = c.LLM.APIKeyEnv
+	} else {
+		envVar = "ANTHROPIC_API_KEY"
+	}
+	key := os.Getenv(envVar)
+	if key == "" {
+		return "", fmt.Errorf("environment variable %s is not set", envVar)
+	}
+	return key, nil
 }
 
 // LLMConfigured returns true if all required LLM fields are set.

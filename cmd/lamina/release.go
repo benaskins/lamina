@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	loop "github.com/benaskins/axon-loop"
 	talk "github.com/benaskins/axon-talk"
 	"github.com/benaskins/axon-talk/anthropic"
 	"github.com/benaskins/axon-talk/ollama"
@@ -88,10 +89,11 @@ func runRelease(cmd *cobra.Command, args []string) error {
 }
 
 func releaseOne(ctx context.Context, root, name, version string, dryRun bool) error {
-	dir := filepath.Join(root, name)
-	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+	dir, err := resolveRepoDir(root, name)
+	if err != nil {
 		return fmt.Errorf("%q is not a git repo in the workspace", name)
 	}
+	isApp := strings.HasPrefix(dir, filepath.Join(root, "apps")+string(os.PathSeparator))
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return fmt.Errorf("%q has no go.mod", name)
 	}
@@ -124,20 +126,50 @@ func releaseOne(ctx context.Context, root, name, version string, dryRun bool) er
 			logRange = "HEAD"
 		}
 		commitLog := gitOutput(dir, "log", "--oneline", logRange)
-		notes := generateReleaseNotes(version, commitLog)
+		diff := gitOutput(dir, "diff", "--stat", logRange)
+		notes := releaseNotes(ctx, dir, name, version, commitLog, diff)
 		fmt.Printf("[dry-run] release notes:\n%s\n", notes)
 		runDocReview(ctx, dir, name, prevTag, version, true)
 		return nil
 	}
 
+	// For apps: strip replace directives, tidy, commit, tag, then restore
+	if isApp {
+		if err := stripAppReplaces(dir); err != nil {
+			return fmt.Errorf("stripping replace directives: %w", err)
+		}
+		tidyCmd := exec.Command("go", "mod", "tidy")
+		tidyCmd.Dir = dir
+		if err := tidyCmd.Run(); err != nil {
+			restoreAppReplaces(dir)
+			return fmt.Errorf("go mod tidy after stripping replaces: %w", err)
+		}
+		_ = runGit(dir, "add", "go.mod", "go.sum")
+		_ = runGit(dir, "commit", "-m", fmt.Sprintf("release: strip replace directives for %s", version))
+	}
+
 	fmt.Printf("Tagging %s %s...\n", name, version)
 	if err := runGit(dir, "tag", version); err != nil {
+		if isApp {
+			restoreAppReplaces(dir)
+		}
 		return fmt.Errorf("git tag failed: %w", err)
 	}
 
 	fmt.Printf("Pushing tag %s...\n", version)
 	if err := runGit(dir, "push", "origin", version); err != nil {
+		if isApp {
+			restoreAppReplaces(dir)
+		}
 		return fmt.Errorf("git push failed: %w", err)
+	}
+
+	// For apps: push the commit with stripped replaces, then restore for local dev
+	if isApp {
+		_ = runGit(dir, "push", "origin", "main")
+		if err := restoreAppReplaces(dir); err != nil {
+			fmt.Printf("  warning: could not restore replace directives: %v\n", err)
+		}
 	}
 
 	fmt.Printf("Released %s %s\n", name, version)
@@ -151,7 +183,8 @@ func releaseOne(ctx context.Context, root, name, version string, dryRun bool) er
 		logRange = version // first release — all commits
 	}
 	commitLog := gitOutput(dir, "log", "--oneline", logRange)
-	notes := generateReleaseNotes(version, commitLog)
+	diff := gitOutput(dir, "diff", "--stat", logRange)
+	notes := releaseNotes(ctx, dir, name, version, commitLog, diff)
 
 	fmt.Printf("Creating GitHub release %s...\n", version)
 	ghArgs := []string{"release", "create", version, "--title", version, "--notes", notes}
@@ -183,40 +216,48 @@ func releaseOne(ctx context.Context, root, name, version string, dryRun bool) er
 }
 
 func releaseAll(ctx context.Context, root, version string, dryRun bool) error {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return err
-	}
-
 	var modules []releaseModule
 
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		dir := filepath.Join(root, e.Name())
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-			continue
-		}
-		modPath := filepath.Join(dir, "go.mod")
-		if _, err := os.Stat(modPath); err != nil {
-			continue
-		}
+	// Scan root-level and apps/ directories
+	scanDirs := []string{root}
+	appsDir := filepath.Join(root, "apps")
+	if _, err := os.Stat(appsDir); err == nil {
+		scanDirs = append(scanDirs, appsDir)
+	}
 
-		// Skip if tag already exists
-		existing := gitOutput(dir, "tag", "-l", version)
-		if existing != "" {
+	for _, scanDir := range scanDirs {
+		entries, err := os.ReadDir(scanDir)
+		if err != nil {
 			continue
 		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			dir := filepath.Join(scanDir, e.Name())
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+				continue
+			}
+			modPath := filepath.Join(dir, "go.mod")
+			if _, err := os.Stat(modPath); err != nil {
+				continue
+			}
 
-		// Skip if dirty
-		if status := gitOutput(dir, "status", "--porcelain"); status != "" {
-			fmt.Printf("  skipping %s (uncommitted changes)\n", e.Name())
-			continue
+			// Skip if tag already exists
+			existing := gitOutput(dir, "tag", "-l", version)
+			if existing != "" {
+				continue
+			}
+
+			// Skip if dirty
+			if status := gitOutput(dir, "status", "--porcelain"); status != "" {
+				fmt.Printf("  skipping %s (uncommitted changes)\n", e.Name())
+				continue
+			}
+
+			deps := workspaceDeps(modPath)
+			modules = append(modules, releaseModule{name: e.Name(), deps: deps})
 		}
-
-		deps := workspaceDeps(modPath)
-		modules = append(modules, releaseModule{name: e.Name(), deps: deps})
 	}
 
 	if len(modules) == 0 {
@@ -258,7 +299,10 @@ func checkDepsPublished(root, dir string) []string {
 	deps := workspaceDeps(modPath)
 	var warnings []string
 	for _, dep := range deps {
-		depDir := filepath.Join(root, dep)
+		depDir, err := resolveRepoDir(root, dep)
+		if err != nil {
+			continue
+		}
 		if _, err := os.Stat(filepath.Join(depDir, ".git")); err != nil {
 			continue
 		}
@@ -305,7 +349,104 @@ type releaseModule struct {
 	deps []string
 }
 
+const releaseNotesPrompt = `You are writing release notes for a Go module. Given the module name, new version, and a git commit log, write concise release notes in markdown.
+
+Rules:
+- Summarise what changed at a meaningful level — don't list individual commits
+- Group changes into categories if there are multiple themes (e.g., "Features", "Fixes", "Improvements")
+- Use short, direct sentences
+- Skip commits that are purely mechanical (dependency bumps, formatting, CI changes) unless they're the only changes
+- If there's only one meaningful change, just describe it — no need for categories
+- Start with a one-line summary of the release, then details
+- Do not include the version number as a heading — the caller adds that
+- Output only the markdown body, no fences`
+
+// releaseNotes generates release notes using an LLM, falling back to the
+// deterministic commit-grouping format if no LLM is configured.
+func releaseNotes(ctx context.Context, dir, name, version, commitLog, diff string) string {
+	cfg, err := config.Load(config.DefaultPath())
+	if err != nil {
+		return generateReleaseNotes(version, commitLog)
+	}
+
+	apiKey, err := cfg.NotesAPIKey()
+	if err != nil {
+		return generateReleaseNotes(version, commitLog)
+	}
+
+	client, err := newLLMClient(cfg.NotesProvider(), apiKey)
+	if err != nil {
+		return generateReleaseNotes(version, commitLog)
+	}
+
+	// Read module description from AGENTS.md first paragraph
+	moduleDesc := readModuleDescription(dir)
+
+	var userMsg strings.Builder
+	fmt.Fprintf(&userMsg, "Module: %s\nVersion: %s\n", name, version)
+	if moduleDesc != "" {
+		fmt.Fprintf(&userMsg, "\nWhat this module does:\n%s\n", moduleDesc)
+	}
+	fmt.Fprintf(&userMsg, "\nCommit log:\n%s\n", commitLog)
+	fmt.Fprintf(&userMsg, "\nDiff:\n%s\n", diff)
+
+	req := &talk.Request{
+		Model: cfg.NotesModel(),
+		Messages: []talk.Message{
+			{Role: talk.RoleSystem, Content: releaseNotesPrompt},
+			{Role: talk.RoleUser, Content: userMsg.String()},
+		},
+	}
+
+	result, err := loop.Run(ctx, loop.RunConfig{
+		Client:  client,
+		Request: req,
+	})
+	if err != nil {
+		fmt.Printf("  warning: LLM release notes failed, using commit log: %v\n", err)
+		return generateReleaseNotes(version, commitLog)
+	}
+
+	notes := strings.TrimSpace(result.Content)
+	if notes == "" {
+		return generateReleaseNotes(version, commitLog)
+	}
+	return fmt.Sprintf("## What's new in %s\n\n%s\n", version, notes)
+}
+
+// readModuleDescription extracts the first paragraph from AGENTS.md (after the heading).
+func readModuleDescription(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		return ""
+	}
+
+	lines := strings.Split(string(data), "\n")
+	var para []string
+	started := false
+	for _, line := range lines {
+		// Skip heading lines
+		if strings.HasPrefix(line, "#") {
+			if started {
+				break // hit the next section
+			}
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			if started {
+				break // end of first paragraph
+			}
+			continue
+		}
+		started = true
+		para = append(para, trimmed)
+	}
+	return strings.Join(para, " ")
+}
+
 // generateReleaseNotes formats a git log into grouped release notes markdown.
+// Used as a fallback when no LLM is configured.
 func generateReleaseNotes(version, commitLog string) string {
 	var features, fixes, other []string
 
@@ -429,33 +570,49 @@ func runDocReview(ctx context.Context, dir, name, oldTag, newTag string, dryRun 
 }
 
 func backfillReleaseNotes(root string, dryRun bool) error {
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return err
+	// Collect all repo directories from root and apps/
+	type entry struct {
+		name string
+		dir  string
+	}
+	var repos []entry
+
+	scanDirs := []string{root}
+	appsDir := filepath.Join(root, "apps")
+	if _, err := os.Stat(appsDir); err == nil {
+		scanDirs = append(scanDirs, appsDir)
+	}
+	for _, scanDir := range scanDirs {
+		entries, err := os.ReadDir(scanDir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			dir := filepath.Join(scanDir, e.Name())
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
+				continue
+			}
+			repos = append(repos, entry{name: e.Name(), dir: dir})
+		}
 	}
 
 	var created int
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		dir := filepath.Join(root, e.Name())
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
-			continue
-		}
-
+	for _, r := range repos {
 		// Get all tags in chronological order
-		tagsOut := gitOutput(dir, "tag", "--sort=version:refname")
+		tagsOut := gitOutput(r.dir, "tag", "--sort=version:refname")
 		if tagsOut == "" {
 			continue
 		}
 		tags := strings.Split(tagsOut, "\n")
 
 		// Check which tags have GitHub releases
-		existingReleases := gitOutput(dir, "ls-remote", "--tags", "origin")
+		existingReleases := gitOutput(r.dir, "ls-remote", "--tags", "origin")
 		_ = existingReleases // tags exist remotely, but we need to check gh releases
 
 		for i, tag := range tags {
@@ -466,7 +623,7 @@ func backfillReleaseNotes(root string, dryRun bool) error {
 
 			// Check if GitHub release exists
 			ghCheck := exec.Command("gh", "release", "view", tag)
-			ghCheck.Dir = dir
+			ghCheck.Dir = r.dir
 			if err := ghCheck.Run(); err == nil {
 				continue // release already exists
 			}
@@ -478,21 +635,21 @@ func backfillReleaseNotes(root string, dryRun bool) error {
 			} else {
 				logRange = tag
 			}
-			commitLog := gitOutput(dir, "log", "--oneline", logRange)
+			commitLog := gitOutput(r.dir, "log", "--oneline", logRange)
 			notes := generateReleaseNotes(tag, commitLog)
 
 			if dryRun {
-				fmt.Printf("[dry-run] would create release %s/%s\n", e.Name(), tag)
+				fmt.Printf("[dry-run] would create release %s/%s\n", r.name, tag)
 				continue
 			}
 
-			fmt.Printf("Creating release %s/%s...\n", e.Name(), tag)
+			fmt.Printf("Creating release %s/%s...\n", r.name, tag)
 			ghCmd := exec.Command("gh", "release", "create", tag, "--title", tag, "--notes", notes)
-			ghCmd.Dir = dir
+			ghCmd.Dir = r.dir
 			ghCmd.Stdout = os.Stdout
 			ghCmd.Stderr = os.Stderr
 			if err := ghCmd.Run(); err != nil {
-				fmt.Printf("  warning: failed to create release %s/%s: %v\n", e.Name(), tag, err)
+				fmt.Printf("  warning: failed to create release %s/%s: %v\n", r.name, tag, err)
 				continue
 			}
 			created++
@@ -526,4 +683,43 @@ func runGit(dir string, args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// stripAppReplaces removes all workspace replace directives from an app's go.mod.
+func stripAppReplaces(appDir string) error {
+	modPath := filepath.Join(appDir, "go.mod")
+	data, err := os.ReadFile(modPath)
+	if err != nil {
+		return err
+	}
+	f, err := modfile.Parse(modPath, data, nil)
+	if err != nil {
+		return err
+	}
+
+	for _, rep := range f.Replace {
+		// Only strip local (relative path) replaces for workspace modules
+		if strings.HasPrefix(rep.New.Path, ".") || strings.HasPrefix(rep.New.Path, "/") {
+			if err := f.DropReplace(rep.Old.Path, rep.Old.Version); err != nil {
+				return fmt.Errorf("dropping replace for %s: %w", rep.Old.Path, err)
+			}
+		}
+	}
+
+	f.Cleanup()
+	out, err := f.Format()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(modPath, out, 0644)
+}
+
+// restoreAppReplaces restores replace directives by re-wiring them from the workspace.
+// Uses git checkout to restore go.mod to the pre-strip state, then tidies.
+func restoreAppReplaces(appDir string) error {
+	if err := runGit(appDir, "checkout", "HEAD~1", "--", "go.mod", "go.sum"); err != nil {
+		return err
+	}
+	_ = runGit(appDir, "add", "go.mod", "go.sum")
+	return runGit(appDir, "commit", "-m", "release: restore replace directives for local development")
 }

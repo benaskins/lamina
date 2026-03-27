@@ -20,18 +20,19 @@ Creates a public GitHub repo under benaskins/, adds the remote, pushes,
 appends to repos.yaml, and installs pre-commit hooks.
 
 The repo must already exist as a directory with a .git folder under the
-workspace root.
+workspace root (or apps/ for --app).
 
 Examples:
   lamina repo add axon-face
   lamina repo add axon-face --private
-  lamina repo add axon-face --description "Terminal UI for axon chat"`,
+  lamina repo add imago --app --description "Interview-driven blog writer"`,
 	Args: cobra.ExactArgs(1),
 	RunE: runRepoAdd,
 }
 
 func init() {
 	repoAddCmd.Flags().Bool("private", false, "Create a private GitHub repo")
+	repoAddCmd.Flags().Bool("app", false, "Register as an app (lives under apps/)")
 	repoAddCmd.Flags().String("description", "", "GitHub repo description")
 	repoCmd.AddCommand(repoAddCmd)
 }
@@ -39,6 +40,7 @@ func init() {
 func runRepoAdd(cmd *cobra.Command, args []string) error {
 	name := args[0]
 	private, _ := cmd.Flags().GetBool("private")
+	isApp, _ := cmd.Flags().GetBool("app")
 	description, _ := cmd.Flags().GetString("description")
 
 	root, err := workspaceRoot()
@@ -46,7 +48,11 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	dir := filepath.Join(root, name)
+	r := repo{Name: name}
+	if isApp {
+		r.Kind = "app"
+	}
+	dir := repoDir(root, r)
 
 	// Validate the local repo exists
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
@@ -96,7 +102,8 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 
 	// Append to repos.yaml
 	fmt.Printf("Adding %s to repos.yaml...\n", name)
-	if err := appendToReposYAML(root, repo{Name: name, URL: ghURL}); err != nil {
+	r.URL = ghURL
+	if err := appendToReposYAML(root, r); err != nil {
 		return fmt.Errorf("failed to update repos.yaml: %w", err)
 	}
 

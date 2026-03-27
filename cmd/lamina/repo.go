@@ -189,7 +189,10 @@ func forEachRepo(root, target string, fn func(name, dir string) error) error {
 		return err
 	}
 	for _, r := range repos {
-		dir := filepath.Join(root, r.Name)
+		dir, err := resolveRepoDir(root, r.Name)
+		if err != nil {
+			continue
+		}
 		if err := fn(r.Name, dir); err != nil {
 			return err
 		}
@@ -211,38 +214,48 @@ func streamGit(dir string, args ...string) error {
 }
 
 // resolveRepoDir validates that name is a git repo under root.
+// Checks both root-level and apps/ subdirectory.
 func resolveRepoDir(root, name string) (string, error) {
-	dir := filepath.Join(root, name)
-
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve workspace root: %w", err)
 	}
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		return "", fmt.Errorf("cannot resolve repo path: %w", err)
-	}
-	if !strings.HasPrefix(absDir, absRoot+string(os.PathSeparator)) {
-		return "", fmt.Errorf("repo name %q escapes workspace root", name)
+
+	// Try root-level first, then apps/
+	candidates := []string{
+		filepath.Join(root, name),
+		filepath.Join(root, "apps", name),
 	}
 
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return "", fmt.Errorf("repo %q not found in workspace", name)
+	for _, dir := range candidates {
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			continue
+		}
+		if !strings.HasPrefix(absDir, absRoot+string(os.PathSeparator)) {
+			return "", fmt.Errorf("repo name %q escapes workspace root", name)
+		}
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+			continue
+		}
+		return dir, nil
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-		return "", fmt.Errorf("%q exists but is not a git repo", name)
-	}
-	return dir, nil
+
+	return "", fmt.Errorf("repo %q not found in workspace", name)
 }
 
 func findRepos(root string) ([]repoInfo, error) {
+	var repos []repoInfo
+
+	// Scan root-level repos
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
 	}
-
-	var repos []repoInfo
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -251,18 +264,38 @@ func findRepos(root string) ([]repoInfo, error) {
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 			continue
 		}
-		info := repoInfo{Name: e.Name()}
-		info.Branch = gitOutput(dir, "rev-parse", "--abbrev-ref", "HEAD")
-		info.SHA = gitOutput(dir, "rev-parse", "--short", "HEAD")
-		info.Commit = gitOutput(dir, "log", "-1", "--format=%s")
-		info.Dirty = gitOutput(dir, "status", "--porcelain") != ""
-		repos = append(repos, info)
+		repos = append(repos, repoInfoFrom(e.Name(), dir))
+	}
+
+	// Scan apps/ subdirectory
+	appsDir := filepath.Join(root, "apps")
+	if appEntries, err := os.ReadDir(appsDir); err == nil {
+		for _, e := range appEntries {
+			if !e.IsDir() {
+				continue
+			}
+			dir := filepath.Join(appsDir, e.Name())
+			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+				continue
+			}
+			repos = append(repos, repoInfoFrom(e.Name(), dir))
+		}
 	}
 
 	sort.Slice(repos, func(i, j int) bool {
 		return repos[i].Name < repos[j].Name
 	})
 	return repos, nil
+}
+
+func repoInfoFrom(name, dir string) repoInfo {
+	return repoInfo{
+		Name:   name,
+		Branch: gitOutput(dir, "rev-parse", "--abbrev-ref", "HEAD"),
+		SHA:    gitOutput(dir, "rev-parse", "--short", "HEAD"),
+		Commit: gitOutput(dir, "log", "-1", "--format=%s"),
+		Dirty:  gitOutput(dir, "status", "--porcelain") != "",
+	}
 }
 
 func gitOutput(dir string, args ...string) string {

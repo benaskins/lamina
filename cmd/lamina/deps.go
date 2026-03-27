@@ -56,30 +56,38 @@ func findModules(root string) ([]moduleDep, error) {
 
 	var goModPaths []string
 
-	// Find go.mod files in top-level repos and their cmd/* subdirectories
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil, err
+	// Find go.mod files in top-level repos, apps/, and their cmd/* subdirectories
+	searchDirs := []string{root}
+	appsDir := filepath.Join(root, "apps")
+	if _, err := os.Stat(appsDir); err == nil {
+		searchDirs = append(searchDirs, appsDir)
 	}
-	for _, e := range entries {
-		if !e.IsDir() {
+
+	for _, searchDir := range searchDirs {
+		entries, err := os.ReadDir(searchDir)
+		if err != nil {
 			continue
 		}
-		repoDir := filepath.Join(root, e.Name())
-		modPath := filepath.Join(repoDir, "go.mod")
-		if _, err := os.Stat(modPath); err == nil {
-			goModPaths = append(goModPaths, modPath)
-		}
-		// Scan cmd/* for nested service modules
-		cmdDir := filepath.Join(repoDir, "cmd")
-		if svcEntries, err := os.ReadDir(cmdDir); err == nil {
-			for _, se := range svcEntries {
-				if !se.IsDir() {
-					continue
-				}
-				svcMod := filepath.Join(cmdDir, se.Name(), "go.mod")
-				if _, err := os.Stat(svcMod); err == nil {
-					goModPaths = append(goModPaths, svcMod)
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			dir := filepath.Join(searchDir, e.Name())
+			modPath := filepath.Join(dir, "go.mod")
+			if _, err := os.Stat(modPath); err == nil {
+				goModPaths = append(goModPaths, modPath)
+			}
+			// Scan cmd/* for nested service modules
+			cmdDir := filepath.Join(dir, "cmd")
+			if svcEntries, err := os.ReadDir(cmdDir); err == nil {
+				for _, se := range svcEntries {
+					if !se.IsDir() {
+						continue
+					}
+					svcMod := filepath.Join(cmdDir, se.Name(), "go.mod")
+					if _, err := os.Stat(svcMod); err == nil {
+						goModPaths = append(goModPaths, svcMod)
+					}
 				}
 			}
 		}
@@ -141,12 +149,15 @@ func findModules(root string) ([]moduleDep, error) {
 }
 
 func printDepsTree(modules []moduleDep) {
-	// Group: libraries (no deps on services) vs services (in cmd/)
-	var libs, services []moduleDep
+	// Group: libraries vs services (in cmd/) vs apps (in apps/)
+	var libs, services, apps []moduleDep
 	for _, m := range modules {
-		if strings.Contains(m.Path, "/cmd/") {
+		switch {
+		case strings.HasPrefix(m.Path, "apps/"):
+			apps = append(apps, m)
+		case strings.Contains(m.Path, "/cmd/"):
 			services = append(services, m)
-		} else {
+		default:
 			libs = append(libs, m)
 		}
 	}
@@ -173,6 +184,19 @@ func printDepsTree(modules []moduleDep) {
 			} else {
 				depNames := shortNames(m.Deps)
 				fmt.Printf("  %s → %s\n", label, strings.Join(depNames, ", "))
+			}
+		}
+	}
+
+	if len(apps) > 0 {
+		fmt.Println("\nApps:")
+		for _, m := range apps {
+			shortName := strings.TrimPrefix(m.Module, modulePrefix)
+			if len(m.Deps) == 0 {
+				fmt.Printf("  %s\n", shortName)
+			} else {
+				depNames := shortNames(m.Deps)
+				fmt.Printf("  %s → %s\n", shortName, strings.Join(depNames, ", "))
 			}
 		}
 	}
