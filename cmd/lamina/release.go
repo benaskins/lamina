@@ -200,7 +200,7 @@ func releaseOne(ctx context.Context, root, name, version string, dryRun bool) er
 	runDocReview(ctx, dir, name, prevTag, version, false)
 
 	// Refresh getlamina.ai with updated versions and deps
-	refreshScript := filepath.Join(root, "bin", "refresh-getlamina")
+	refreshScript := filepath.Join(root, "scripts", "refresh-getlamina")
 	if _, err := os.Stat(refreshScript); err == nil {
 		fmt.Println("Refreshing getlamina.ai...")
 		refresh := exec.Command(refreshScript, "--deploy")
