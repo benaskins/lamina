@@ -84,7 +84,7 @@ echo "==> Building index.html"
 echo "==> Done"
 
 if $DEPLOY; then
-  echo "==> Deploying to hestia + Cloudflare"
-  scp "$SITE_DIR/index.html" "$CATALOG" hestia:~/dev/sites/getlamina.ai/
-  ssh hestia 'source ~/.zshrc 2>/dev/null; cd ~/dev/sites && bin/deploy-site getlamina.ai'
+  echo "==> Deploying to Cloudflare Pages"
+  PROJECT_NAME="getlamina-ai"
+  (cd "$SITE_DIR" && npx wrangler pages deploy . --project-name="$PROJECT_NAME" --commit-dirty=true)
 fi
