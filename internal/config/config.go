@@ -12,7 +12,8 @@ import (
 
 // LLM configures the optional LLM integration for doc review.
 type LLM struct {
-	Provider  string `yaml:"provider"`    // "anthropic", "ollama", "openai"
+	Provider  string `yaml:"provider"`    // "anthropic", "openai"
+	BaseURL   string `yaml:"base_url"`   // base URL for openai-compatible providers (e.g. http://localhost:8080/v1)
 	Model     string `yaml:"model"`       // model name
 	APIKeyEnv string `yaml:"api_key_env"` // env var holding the API key
 }
@@ -34,9 +35,10 @@ type Config struct {
 
 // Release configures release behaviour.
 type Release struct {
-	NotesProvider string `yaml:"notes_provider,omitempty"` // LLM provider for release notes (default: anthropic)
-	NotesModel    string `yaml:"notes_model,omitempty"`    // model for release notes (default: claude-haiku-4-5-20251001)
+	NotesProvider  string `yaml:"notes_provider,omitempty"`   // LLM provider for release notes (default: anthropic)
+	NotesModel     string `yaml:"notes_model,omitempty"`      // model for release notes (default: claude-haiku-4-5-20251001)
 	NotesAPIKeyEnv string `yaml:"notes_api_key_env,omitempty"` // env var for API key (default: same as llm.api_key_env)
+	NotesBaseURL   string `yaml:"notes_base_url,omitempty"`   // base URL for openai-compatible provider
 }
 
 // NotesProvider returns the configured provider or the default.
@@ -56,6 +58,17 @@ func (c *Config) NotesModel() string {
 		return c.Release.NotesModel
 	}
 	return "claude-haiku-4-5-20251001"
+}
+
+// NotesBaseURL returns the base URL for the release notes provider.
+func (c *Config) NotesBaseURL() string {
+	if c.Release != nil && c.Release.NotesBaseURL != "" {
+		return c.Release.NotesBaseURL
+	}
+	if c.LLM != nil && c.LLM.BaseURL != "" {
+		return c.LLM.BaseURL
+	}
+	return ""
 }
 
 // NotesAPIKey returns the API key for the release notes provider.

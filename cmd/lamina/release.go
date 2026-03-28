@@ -12,7 +12,6 @@ import (
 	loop "github.com/benaskins/axon-loop"
 	talk "github.com/benaskins/axon-talk"
 	"github.com/benaskins/axon-talk/anthropic"
-	"github.com/benaskins/axon-talk/ollama"
 	"github.com/benaskins/axon-talk/openai"
 	"github.com/benaskins/lamina/internal/config"
 	"github.com/benaskins/lamina/internal/docreview"
@@ -388,7 +387,7 @@ func releaseNotes(ctx context.Context, dir, name, version, commitLog, diff strin
 		return generateReleaseNotes(version, commitLog)
 	}
 
-	client, err := newLLMClient(cfg.NotesProvider(), apiKey)
+	client, err := newLLMClient(cfg.NotesProvider(), cfg.NotesBaseURL(), apiKey)
 	if err != nil {
 		return generateReleaseNotes(version, commitLog)
 	}
@@ -540,7 +539,7 @@ func runDocReview(ctx context.Context, dir, name, oldTag, newTag string, dryRun 
 		return
 	}
 
-	llm, err := newLLMClient(cfg.LLM.Provider, apiKey)
+	llm, err := newLLMClient(cfg.LLM.Provider, cfg.LLM.BaseURL, apiKey)
 	if err != nil {
 		fmt.Printf("  warning: could not create LLM client: %v\n", err)
 		return
@@ -678,16 +677,17 @@ func backfillReleaseNotes(root string, dryRun bool) error {
 	return nil
 }
 
-func newLLMClient(provider, apiKey string) (talk.LLMClient, error) {
+func newLLMClient(provider, baseURL, apiKey string) (talk.LLMClient, error) {
 	switch provider {
 	case "anthropic":
 		return anthropic.NewClient("https://api.anthropic.com", apiKey), nil
-	case "ollama":
-		return ollama.NewClientFromEnvironment()
 	case "openai":
-		return openai.NewClient("https://api.openai.com", apiKey), nil
+		if baseURL == "" {
+			baseURL = "https://api.openai.com"
+		}
+		return openai.NewClient(baseURL, apiKey), nil
 	default:
-		return nil, fmt.Errorf("unsupported LLM provider %q (supported: anthropic, ollama, openai)", provider)
+		return nil, fmt.Errorf("unsupported LLM provider %q (supported: anthropic, openai)", provider)
 	}
 }
 

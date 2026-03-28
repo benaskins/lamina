@@ -1,15 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
-	"time"
+	"strings"
 
+	talk "github.com/benaskins/axon-talk"
+	"github.com/benaskins/axon-talk/openai"
 	eval "github.com/benaskins/axon-eval"
 	"github.com/spf13/cobra"
 )
@@ -49,8 +47,10 @@ func runEval(cmd *cobra.Command, args []string) error {
 	var judge eval.Judge
 	judgeModel := os.Getenv("JUDGE_MODEL")
 	if judgeModel != "" {
-		ollamaURL := envOrDefault("OLLAMA_URL", "http://localhost:11434")
-		generate := newOllamaTextGenerator(ollamaURL, judgeModel)
+		baseURL := envOrDefault("JUDGE_BASE_URL", "http://localhost:8080/v1")
+		token := os.Getenv("JUDGE_API_KEY")
+		llm := openai.NewClient(baseURL, token)
+		generate := newTextGenerator(llm, judgeModel)
 		judge = eval.NewOllamaJudge(generate)
 	}
 
@@ -128,48 +128,28 @@ func envOrDefault(key, defaultVal string) string {
 	return defaultVal
 }
 
-// newOllamaTextGenerator creates a TextGenerator that calls Ollama's /api/generate endpoint.
-func newOllamaTextGenerator(baseURL, model string) eval.TextGenerator {
+// newTextGenerator wraps a talk.LLMClient into an eval.TextGenerator.
+func newTextGenerator(client talk.LLMClient, model string) eval.TextGenerator {
 	return func(ctx context.Context, prompt string, temperature float64, maxTokens int) (string, error) {
-		httpClient := &http.Client{Timeout: 60 * time.Second}
-
-		reqBody := map[string]any{
-			"model":  model,
-			"prompt": prompt,
-			"stream": false,
-			"options": map[string]any{
+		req := &talk.Request{
+			Model: model,
+			Messages: []talk.Message{
+				{Role: "user", Content: prompt},
+			},
+			Options: map[string]any{
 				"temperature": temperature,
-				"num_predict": maxTokens,
+				"max_tokens":  maxTokens,
 			},
 		}
 
-		data, err := json.Marshal(reqBody)
+		var buf strings.Builder
+		err := client.Chat(ctx, req, func(resp talk.Response) error {
+			buf.WriteString(resp.Content)
+			return nil
+		})
 		if err != nil {
-			return "", fmt.Errorf("marshal request: %w", err)
+			return "", err
 		}
-
-		resp, err := httpClient.Post(baseURL+"/api/generate", "application/json", bytes.NewReader(data))
-		if err != nil {
-			return "", fmt.Errorf("ollama request: %w", err)
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return "", fmt.Errorf("read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("ollama error %d: %s", resp.StatusCode, string(body))
-		}
-
-		var result struct {
-			Response string `json:"response"`
-		}
-		if err := json.Unmarshal(body, &result); err != nil {
-			return "", fmt.Errorf("decode response: %w", err)
-		}
-
-		return result.Response, nil
+		return buf.String(), nil
 	}
 }
