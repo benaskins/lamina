@@ -115,6 +115,16 @@ func releaseOne(ctx context.Context, root, name, version string, dryRun bool) er
 		fmt.Printf("  warning: %s\n", w)
 	}
 
+	// Security audit
+	fmt.Printf("Running security audit on %s...\n", name)
+	audit := runSecurityAudit(dir)
+	audit.print(dir)
+	if !dryRun {
+		if err := audit.check(); err != nil {
+			return fmt.Errorf("release blocked: %v", err)
+		}
+	}
+
 	if dryRun {
 		fmt.Printf("[dry-run] would tag %s at %s and push\n", name, version)
 
