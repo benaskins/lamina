@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -143,5 +144,100 @@ func TestResolveModuleName(t *testing.T) {
 	}
 	if name != "axon-rule" {
 		t.Errorf("resolveModuleName = %q, want %q", name, "axon-rule")
+	}
+}
+
+func TestCleanClaudeMD_ScaffoldDetected(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a scaffold CLAUDE.md with factory markers
+	scaffold := `# CLAUDE.md
+
+## What This Is
+
+Initialise the Go module. Do stuff.
+
+## Framework: Axon/Lamina (go 1.26)
+
+### Patterns
+
+- generic boilerplate here
+`
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(scaffold), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write an AGENTS.md with constraints
+	agents := `# axon-test
+
+Test library.
+
+## Constraints
+
+- No external dependencies
+- Tests must use t.TempDir()
+`
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(agents), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a .original that should be deleted
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md.original"), []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cleanClaudeMD(dir, "axon-test"); err != nil {
+		t.Fatalf("cleanClaudeMD: %v", err)
+	}
+
+	// Verify scaffold was replaced
+	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if strings.Contains(content, "Framework: Axon/Lamina") {
+		t.Error("scaffold marker still present after cleanup")
+	}
+	if !strings.Contains(content, "# axon-test") {
+		t.Error("expected module name as heading")
+	}
+	if !strings.Contains(content, "No external dependencies") {
+		t.Error("expected constraints from AGENTS.md")
+	}
+
+	// Verify .original was removed
+	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md.original")); err == nil {
+		t.Error("CLAUDE.md.original should have been removed")
+	}
+}
+
+func TestCleanClaudeMD_CleanFileUntouched(t *testing.T) {
+	dir := t.TempDir()
+
+	clean := "# axon-foo\n\nA proper post-build CLAUDE.md.\n"
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(clean), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cleanClaudeMD(dir, "axon-foo"); err != nil {
+		t.Fatalf("cleanClaudeMD: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != clean {
+		t.Error("clean CLAUDE.md should not have been modified")
+	}
+}
+
+func TestCleanClaudeMD_NoFile(t *testing.T) {
+	dir := t.TempDir()
+
+	// Should not error when CLAUDE.md doesn't exist
+	if err := cleanClaudeMD(dir, "axon-foo"); err != nil {
+		t.Fatalf("cleanClaudeMD: %v", err)
 	}
 }

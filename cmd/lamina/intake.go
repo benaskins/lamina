@@ -235,7 +235,12 @@ func runIntake(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("%s: clean go.mod failed: %w", e.Name, err)
 		}
 
-		// Step 4: go mod tidy
+		// Step 4: Clean CLAUDE.md (strip factory scaffold artifacts)
+		if err := cleanClaudeMD(targetDir, modName); err != nil {
+			fmt.Printf("  warning: CLAUDE.md cleanup failed: %v\n", err)
+		}
+
+		// Step 5: go mod tidy
 		fmt.Printf("  tidying go.mod...\n")
 		tidy := exec.Command("go", "mod", "tidy")
 		tidy.Dir = targetDir
@@ -244,11 +249,11 @@ func runIntake(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("%s: go mod tidy failed: %s\n%w", e.Name, out, err)
 		}
 
-		// Step 5: Commit clean state
+		// Step 6: Commit clean state
 		_ = runGit(targetDir, "add", "-A")
-		_ = runGit(targetDir, "commit", "-m", "release: clean go.mod for intake")
+		_ = runGit(targetDir, "commit", "-m", "release: clean go.mod and CLAUDE.md for intake")
 
-		// Step 6: Push to GitHub
+		// Step 7: Push to GitHub
 		if isUpdate {
 			fmt.Printf("  pushing to GitHub...\n")
 			if err := runGit(targetDir, "push", "origin", "main"); err != nil {
@@ -272,7 +277,7 @@ func runIntake(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		// Step 7: Tag version
+		// Step 8: Tag version
 		version := nextVersion(targetDir)
 		fmt.Printf("  tagging %s...\n", version)
 		if err := runGit(targetDir, "tag", version); err != nil {
@@ -282,7 +287,7 @@ func runIntake(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("%s: push tag failed: %w", e.Name, err)
 		}
 
-		// Step 8: Build + test
+		// Step 9: Build + test
 		fmt.Printf("  building...\n")
 		build := exec.Command("go", "build", "./...")
 		build.Dir = targetDir
@@ -300,12 +305,12 @@ func runIntake(cmd *cobra.Command, args []string) error {
 			// Don't block intake on test failures; they may need db/infra
 		}
 
-		// Step 9: Update luthier catalogue
+		// Step 10: Update luthier catalogue
 		if err := updateCatalogue(luthierDir, buildDir, modName, e.Type); err != nil {
 			fmt.Printf("  warning: catalogue update failed: %v\n", err)
 		}
 
-		// Step 10: Mark taken
+		// Step 11: Mark taken
 		now := time.Now()
 		e.Taken = &now
 		if err := writePickingSlip(slipPath, slip); err != nil {
@@ -359,6 +364,103 @@ func syncBuildToExisting(buildDir, targetDir string) error {
 		return fmt.Errorf("rsync failed: %s\n%w", out, err)
 	}
 	return nil
+}
+
+// scaffoldMarkers are strings that indicate a CLAUDE.md contains factory
+// scaffold input rather than a proper post-build working document.
+var scaffoldMarkers = []string{
+	"# Toolmaker: Axon Component Builder",
+	"## Framework: Axon/Lamina",
+	"These constraints are extracted from the PRD",
+	"Execute the plan one step at a time",
+	"See `plans/` for commit-sized implementation steps",
+}
+
+// cleanClaudeMD detects factory scaffold artifacts in CLAUDE.md and replaces
+// them with a minimal post-build document. Also removes any .original backup.
+func cleanClaudeMD(dir, modName string) error {
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+	data, err := os.ReadFile(claudePath)
+	if err != nil {
+		return nil // no CLAUDE.md is fine
+	}
+
+	content := string(data)
+	isScaffold := false
+	for _, marker := range scaffoldMarkers {
+		if strings.Contains(content, marker) {
+			isScaffold = true
+			break
+		}
+	}
+
+	if !isScaffold {
+		fmt.Printf("  CLAUDE.md: looks clean, skipping\n")
+	} else {
+		// Extract description from AGENTS.md for the header
+		desc := readModuleDescription(dir)
+		if desc == "" {
+			desc = modName + " library"
+		}
+
+		// Read constraints from AGENTS.md if available
+		constraints := extractConstraints(dir)
+
+		var buf strings.Builder
+		buf.WriteString(fmt.Sprintf("# %s\n\n%s\n", modName, desc))
+		buf.WriteString(fmt.Sprintf("\n## Module\n\n- Module path: `%s%s`\n- Project type: library\n", modulePrefix, modName))
+		buf.WriteString("\n## Build & Test\n\n```bash\njust test    # go test -race ./...\njust vet     # go vet ./...\njust build   # go build ./...\n```\n")
+		buf.WriteString("\nRead [AGENTS.md](./AGENTS.md) for architecture and design decisions.\n")
+		if len(constraints) > 0 {
+			buf.WriteString("\n## Constraints\n\n")
+			for _, c := range constraints {
+				buf.WriteString(fmt.Sprintf("- %s\n", c))
+			}
+		}
+		buf.WriteString("\n- No third-party assertion libraries — standard `testing` package only\n")
+
+		if err := os.WriteFile(claudePath, []byte(buf.String()), 0644); err != nil {
+			return fmt.Errorf("write CLAUDE.md: %w", err)
+		}
+		fmt.Printf("  CLAUDE.md: replaced scaffold with post-build version\n")
+	}
+
+	// Remove .original backup if present
+	origPath := filepath.Join(dir, "CLAUDE.md.original")
+	if _, err := os.Stat(origPath); err == nil {
+		if err := os.Remove(origPath); err != nil {
+			return fmt.Errorf("remove CLAUDE.md.original: %w", err)
+		}
+		fmt.Printf("  CLAUDE.md.original: removed\n")
+	}
+
+	return nil
+}
+
+// extractConstraints pulls constraint bullet points from AGENTS.md.
+// Looks for a "## Constraints" section and reads lines starting with "- ".
+func extractConstraints(dir string) []string {
+	data, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		return nil
+	}
+
+	lines := strings.Split(string(data), "\n")
+	var constraints []string
+	inSection := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "## Constraints") {
+			inSection = true
+			continue
+		}
+		if inSection && strings.HasPrefix(line, "##") {
+			break
+		}
+		if inSection && strings.HasPrefix(line, "- ") {
+			constraints = append(constraints, strings.TrimPrefix(line, "- "))
+		}
+	}
+	return constraints
 }
 
 func stripReplaces(root, dir string) error {
