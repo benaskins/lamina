@@ -87,7 +87,7 @@ func runEval(cmd *cobra.Command, args []string) error {
 		}
 		chatResult := responses[len(responses)-1]
 
-		grade := eval.GradeScenario(ps, chatResult, judge)
+		grade := eval.GradeScenario(cmd.Context(), ps, chatResult, judge)
 		printGrade(grade)
 
 		totalPassed += grade.Passed
