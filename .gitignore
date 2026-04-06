@@ -6,14 +6,8 @@ axon-*/
 # Apps — independent git repos under apps/
 /apps/
 
-# Design docs (local working artifacts, not committed)
-docs/plans/
-
-# PIR (local research, not committed)
-docs/pir/
-
-# Fiction project (local creative work, not committed)
-docs/fiction/
+# Docs (local working artifacts, not committed)
+docs/
 
 # Private facts (Prolog knowledge bases, not published)
 facts/
