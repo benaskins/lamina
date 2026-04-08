@@ -3,6 +3,7 @@ go 1.26.1
 use (
 	.
 	./apps/imago
+	./apps/valuer
 	./apps/vita
 	./aurelia
 	./axon
