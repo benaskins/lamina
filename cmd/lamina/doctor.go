@@ -18,7 +18,7 @@ var doctorCmd = &cobra.Command{
   - Flag modules with unpublished changes vs their latest tag
   - Check go.mod versions match what's available on GitHub
   - Detect missing or broken cross-repo dependencies
-  - Check repos have AGENTS.md and CLAUDE.md
+  - Check required docs (README.md, CLAUDE.md, AGENTS.md, LICENSE, doc.go)
 
 Use --json for machine-readable output (pipeable to lamina heal).`,
 	RunE: runDoctor,
@@ -288,31 +288,64 @@ func checkVersionConsistency(root string) []Diagnostic {
 func checkAgentDocs(root string) []Diagnostic {
 	var diags []Diagnostic
 	for _, re := range scanRepoEntries(root) {
-		hasAgents := false
-		hasClaude := false
-		claudePoints := false
+		diags = append(diags, checkRepoDocs(re)...)
+	}
+	return diags
+}
 
-		if _, err := os.Stat(filepath.Join(re.dir, "AGENTS.md")); err == nil {
-			hasAgents = true
-		}
-		if data, err := os.ReadFile(filepath.Join(re.dir, "CLAUDE.md")); err == nil {
-			hasClaude = true
-			claudePoints = strings.Contains(string(data), "AGENTS.md")
-		}
+// requiredDocs lists the files every Go module must have before release.
+var requiredDocs = []string{"README.md", "CLAUDE.md", "AGENTS.md", "LICENSE"}
 
-		name := re.name + " docs"
-		switch {
-		case hasAgents && hasClaude && claudePoints:
-			diags = append(diags, Diagnostic{Kind: "agent-docs-ok", Name: name, Status: "ok", Message: "AGENTS.md + CLAUDE.md", Dir: re.dir})
-		case !hasAgents && !hasClaude:
-			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "missing AGENTS.md and CLAUDE.md", Dir: re.dir})
-		case !hasAgents:
-			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "missing AGENTS.md", Dir: re.dir})
-		case !hasClaude:
-			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "missing CLAUDE.md", Dir: re.dir})
-		case !claudePoints:
-			diags = append(diags, Diagnostic{Kind: "agent-docs-missing", Name: name, Status: "warn", Message: "CLAUDE.md does not reference AGENTS.md", Dir: re.dir})
+// checkRepoDocs checks a single repo for required documentation files.
+// Returns diagnostics for missing files. Only checks repos with a go.mod.
+func checkRepoDocs(re repoEntry) []Diagnostic {
+	var diags []Diagnostic
+
+	// Only check Go modules
+	if _, err := os.Stat(filepath.Join(re.dir, "go.mod")); err != nil {
+		return diags
+	}
+
+	name := re.name + " docs"
+	var missing []string
+
+	for _, doc := range requiredDocs {
+		if _, err := os.Stat(filepath.Join(re.dir, doc)); err != nil {
+			missing = append(missing, doc)
 		}
+	}
+
+	// Check CLAUDE.md references AGENTS.md
+	if data, err := os.ReadFile(filepath.Join(re.dir, "CLAUDE.md")); err == nil {
+		if !strings.Contains(string(data), "AGENTS.md") {
+			missing = append(missing, "CLAUDE.md->AGENTS.md ref")
+		}
+	}
+
+	// Check for doc.go or a package comment in any root .go file
+	hasDocComment := false
+	entries, _ := os.ReadDir(re.dir)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(re.dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(string(data), "// Package ") {
+			hasDocComment = true
+			break
+		}
+	}
+	if !hasDocComment {
+		missing = append(missing, "doc.go")
+	}
+
+	if len(missing) == 0 {
+		diags = append(diags, Diagnostic{Kind: "docs-ok", Name: name, Status: "ok", Message: "all required docs present", Dir: re.dir})
+	} else {
+		diags = append(diags, Diagnostic{Kind: "docs-missing", Name: name, Status: "fail", Message: "missing: " + strings.Join(missing, ", "), Dir: re.dir})
 	}
 	return diags
 }

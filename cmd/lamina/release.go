@@ -106,10 +106,19 @@ func releaseOne(ctx context.Context, root, name, version string, dryRun bool) er
 		return fmt.Errorf("%s has uncommitted changes — commit or stash first", name)
 	}
 
-	// Check if tag already exists
+	// Skip if tag already exists
 	existing := gitOutput(dir, "tag", "-l", version)
 	if existing != "" {
-		return fmt.Errorf("%s already has tag %s", name, version)
+		fmt.Printf("  skipping %s (already tagged %s)\n", name, version)
+		return nil
+	}
+
+	// Check required documentation is present
+	docDiags := checkRepoDocs(repoEntry{name: name, dir: dir})
+	for _, d := range docDiags {
+		if d.Status == "fail" {
+			return fmt.Errorf("release blocked: %s (%s)", d.Message, name)
+		}
 	}
 
 	// Check workspace deps for unpublished changes

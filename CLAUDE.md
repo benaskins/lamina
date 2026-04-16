@@ -8,7 +8,7 @@ Lamina is a **git repository** that serves as the workspace root for a personal 
 
 1. The **`lamina` CLI** (`cmd/lamina/`) — a workspace management tool for coordinating across sub-repos
 2. **Claude Code skills** (`skills/`) — embedded skill definitions for workspace operations
-3. **Example applications** (`examples/`) — reference implementations showing how to assemble axon modules
+3. **Applications** (`apps/`) — workspace apps built on axon modules (imago, revue, valuer, vita)
 
 The workspace is populated by `lamina init`, which clones all sub-repos into this directory. Each sub-repo has its own `.git` and is pushed to GitHub separately (gitignored here).
 
@@ -28,7 +28,7 @@ The workspace is populated by `lamina init`, which clones all sub-repos into thi
 | **axon-face** | Frontend component library for axon service UIs |
 | **axon-fact** | Event sourcing primitives: Event type, EventStore/Projector/Publisher interfaces |
 | **axon-gate** | Deploy approval gate with Signal notifications and review UI |
-| **axon-hand** | CLI scaffolding for axon tool implementations |
+| **axon-hand** | Shared chassis for factory agents: LLM client config, worker identity, CLI, lifecycle |
 | **axon-lens** | Image generation pipeline: prompt merging, FLUX.1 via MLX, gallery storage |
 | **axon-look** | Analytics event ingestion and querying backed by ClickHouse |
 | **axon-loop** | Provider-agnostic conversation loop for LLM-powered agents |
@@ -41,7 +41,7 @@ The workspace is populated by `lamina init`, which clones all sub-repos into thi
 | **axon-sign** | Cryptographic signing: Ed25519 keypairs, SSHSIG signatures, key rotation, provenance |
 | **axon-snip** | Code assembly engine: PRD analysis, module selection, scaffold generation |
 | **axon-synd** | Syndication engine: publish to static site, syndicate to Bluesky, Mastodon, Threads |
-| **axon-talk** | LLM provider adapters for axon-loop (Ollama, Cloudflare Workers AI) |
+| **axon-talk** | LLM provider adapters for axon-loop (OpenAI-compatible, Anthropic) |
 | **axon-tape** | Buffered token stream filter: pluggable matchers, content safety, PII redaction |
 | **axon-task** | Generic async task runner with pluggable workers |
 | **axon-tool** | Tool definition and execution primitives for LLM agents |
@@ -88,7 +88,7 @@ axon-loop    : conversation loop (axon-tool)
 axon-nats    : NATS adapters (axon, nats.go)
 axon-scan    : code quality pipeline (axon-loop, axon-tool)
 axon-sign    : cryptographic signing (golang.org/x/crypto)
-axon-talk    : LLM provider adapters (axon-tape, axon-tool)
+axon-talk    : LLM provider adapters: OpenAI-compatible, Anthropic (axon-tape, axon-tool)
 ```
 
 Domain packages:
@@ -133,6 +133,10 @@ lamina heal                     # Fix issues found by doctor
 lamina release axon-tool v0.2.0 # Tag a module and push the tag
 lamina release --dry-run axon v1.0  # Preview what a release would do
 
+lamina catalogue                # Show workspace module catalogue
+lamina apps build <name>        # Build a workspace application
+lamina apps install <name>      # Build + install to ~/.local/bin
+
 lamina eval plans/smoke.yaml    # Run a YAML evaluation plan against the cluster
 lamina skills                   # List embedded Claude Code skills
 ```
@@ -171,17 +175,18 @@ go vet ./...        # Lint
 ```
 lamina/
 ├── cmd/lamina/         # CLI source
+├── apps/               # Workspace applications (imago, revue, valuer, vita)
 ├── skills/             # Embedded Claude Code skills
 │   ├── debug-lamina/   # Extends /debug
 │   ├── deploy-lamina/  # Extends /deploy
 │   ├── ground-lamina/  # Extends /ground
 │   └── verify-lamina/  # Extends /verify
-├── examples/
-│   └── chat/           # Example chat service (axon + axon-loop + axon-talk)
 ├── plans/              # Evaluation plans (YAML)
 ├── docs/
-├── justfile
+├── repos.yaml          # Workspace catalogue (all sub-repos)
+├── go.work             # Go workspace (all modules + apps)
 ├── go.mod
+├── justfile
 └── [sub-repos]/        # Cloned by `lamina init`, gitignored
 ```
 

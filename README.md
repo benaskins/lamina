@@ -2,19 +2,19 @@
 
 > **This software is designed for managing hobby compute environments on macOS. Nothing else.**
 >
-> Lamina exists to support experiments and research into autonomous LLM-backed agents on a private, sovereign server. It includes everything you'd need to treat that server like a production stack — monitoring, deployment, process supervision — but this is for education and exploration, not actual production use.
+> Lamina exists to support experiments and research into autonomous LLM-backed agents on a private, sovereign server. It includes everything you'd need to treat that server like a production stack (monitoring, deployment, process supervision) but this is for education and exploration, not actual production use.
 >
 > You could use this to build self-modifying, self-deploying agents that reason about their own uptime, check whether the services they depend on are alive, and operate those services if needed. That's the point. The ACL and security model is weak right now and will improve over time.
 >
-> It is not built for scale. It's intended for a single user on macOS, working at the command line with tools like [Claude Code](https://docs.anthropic.com/en/docs/claude-code). No IDE integration, no GUI — just a shell.
+> It is not built for scale. It's intended for a single user on macOS, working at the command line with tools like [Claude Code](https://docs.anthropic.com/en/docs/claude-code). No IDE integration, no GUI, just a shell.
 
-Lamina is the workspace and CLI for a personal compute cluster built on Go. It represents the system at rest — the modules, the configuration, the structure — and provides the tooling to manage it all.
+Lamina is the workspace and CLI for a personal compute cluster built on Go. It represents the system at rest (modules, configuration, structure) and provides the tooling to manage it all.
 
 The workspace is decomposed into small, focused repos that an AI coding agent can reason about independently. Three layers make up the system:
 
-- **lamina** (this repo) manages the workspace — repo status, dependency graphs, testing, releases
-- **[aurelia](https://github.com/benaskins/aurelia)** supervises the system in flight — process lifecycle, health checks, service dependencies
-- **[axon](https://github.com/benaskins/axon)** and the **axon-\*** modules are the building material — a suite of Go libraries you assemble services from
+- **lamina** (this repo) manages the workspace: repo status, dependency graphs, testing, releases
+- **[aurelia](https://github.com/benaskins/aurelia)** supervises the system in flight: process lifecycle, health checks, service dependencies
+- **[axon](https://github.com/benaskins/axon)** and the **axon-\*** modules are the building material: a suite of Go libraries you assemble services from
 
 ## Workspace
 
@@ -22,7 +22,7 @@ The workspace is decomposed into small, focused repos that an AI coding agent ca
 
 | Repo | Description |
 |------|-------------|
-| [axon](https://github.com/benaskins/axon) | Shared toolkit for AI-powered web services — server lifecycle, auth, database, metrics, SSE, stream filtering |
+| [axon](https://github.com/benaskins/axon) | Shared toolkit for AI-powered web services: server lifecycle, auth, database, metrics, SSE, stream filtering |
 
 **Primitives**
 
@@ -30,24 +30,42 @@ The workspace is decomposed into small, focused repos that an AI coding agent ca
 |------|-------------|
 | [axon-tool](https://github.com/benaskins/axon-tool) | Tool definition and execution primitives for LLM agents |
 | [axon-loop](https://github.com/benaskins/axon-loop) | Provider-agnostic conversation loop for LLM-powered agents |
-| [axon-talk](https://github.com/benaskins/axon-talk) | LLM provider adapters for axon-loop (Ollama, Cloudflare Workers AI) |
-| [axon-wire](https://github.com/benaskins/axon-wire) | HTTP transport that routes outbound requests through a Cloudflare Worker proxy |
-| [axon-fact](https://github.com/benaskins/axon-fact) | Event sourcing primitives — Event type, EventStore/Projector/Publisher interfaces |
+| [axon-talk](https://github.com/benaskins/axon-talk) | LLM provider adapters (OpenAI-compatible, Anthropic) |
+| [axon-tape](https://github.com/benaskins/axon-tape) | Buffered token stream filter with pluggable matchers, content safety, PII redaction |
+| [axon-base](https://github.com/benaskins/axon-base) | PostgreSQL foundation: connection pooling, repository interfaces, migrations, row scanning |
+| [axon-fact](https://github.com/benaskins/axon-fact) | Event sourcing primitives: Event type, EventStore/Projector/Publisher interfaces |
+| [axon-rule](https://github.com/benaskins/axon-rule) | Composable business-rule predicates and typed state machine |
+| [axon-sign](https://github.com/benaskins/axon-sign) | Cryptographic signing: Ed25519 keypairs, SSHSIG signatures, key rotation, provenance |
 | [axon-mind](https://github.com/benaskins/axon-mind) | Embedded Prolog engine for structured inference over facts and rules |
-| [axon-nats](https://github.com/benaskins/axon-nats) | NATS adapters for axon services — EventBus[T] for cross-instance fan-out |
-| [axon-lens](https://github.com/benaskins/axon-lens) | Image generation pipeline — prompt merging, FLUX.1 via MLX, gallery storage |
+| [axon-wire](https://github.com/benaskins/axon-wire) | HTTP transport that routes outbound requests through a Cloudflare Worker proxy |
+| [axon-nats](https://github.com/benaskins/axon-nats) | NATS EventBus[T] for cross-instance fan-out |
+| [axon-push](https://github.com/benaskins/axon-push) | Push notification primitives |
+
+**Agent infrastructure**
+
+| Repo | Description |
+|------|-------------|
+| [axon-hand](https://github.com/benaskins/axon-hand) | Shared chassis for autonomous agents: LLM client config, worker identity, CLI, lifecycle |
+| [axon-code](https://github.com/benaskins/axon-code) | Coding agent library with LLM conversation loop, file-system and shell tools |
+| [axon-snip](https://github.com/benaskins/axon-snip) | Code assembly engine: PRD analysis, module selection, scaffold generation |
+| [axon-scan](https://github.com/benaskins/axon-scan) | Code quality pipeline: static analysis, security scanning, test execution, signed attestation |
+| [axon-cost](https://github.com/benaskins/axon-cost) | LLM inference cost tracking middleware with rate tables and budget alerts |
+| [axon-lore](https://github.com/benaskins/axon-lore) | Architecture Decision Records: structured ADR generation and management |
 
 **Domain packages**
 
 | Repo | Description |
 |------|-------------|
 | [axon-auth](https://github.com/benaskins/axon-auth) | WebAuthn-based authentication with passkey registration, login, and session management |
+| [axon-book](https://github.com/benaskins/axon-book) | Event-sourced double-entry bookkeeping: ledger, chart of accounts, journal entries |
 | [axon-chat](https://github.com/benaskins/axon-chat) | Chat with LLM integration, tool calling, SSE streaming, and agent management |
+| [axon-face](https://github.com/benaskins/axon-face) | Bubble Tea TUI components for LLM-powered conversational interfaces |
 | [axon-gate](https://github.com/benaskins/axon-gate) | Deploy approval gate with Signal notifications and a review UI |
+| [axon-lens](https://github.com/benaskins/axon-lens) | Image generation pipeline: prompt merging, FLUX.1 via MLX, gallery storage |
 | [axon-look](https://github.com/benaskins/axon-look) | Analytics event ingestion and querying backed by ClickHouse |
 | [axon-memo](https://github.com/benaskins/axon-memo) | Long-term memory extraction and consolidation for LLM agents |
+| [axon-synd](https://github.com/benaskins/axon-synd) | Syndication engine: publish to a static site, syndicate to Bluesky, Mastodon, Threads |
 | [axon-task](https://github.com/benaskins/axon-task) | Generic asynchronous task runner with pluggable workers |
-| [axon-synd](https://github.com/benaskins/axon-synd) | Personal syndication engine — publish to a static site, syndicate to Bluesky, Mastodon, Threads |
 
 **Standalone tools**
 
@@ -55,6 +73,14 @@ The workspace is decomposed into small, focused repos that an AI coding agent ca
 |------|-------------|
 | [aurelia](https://github.com/benaskins/aurelia) | Process supervisor for native processes and Docker containers, with macOS-specific enhancements |
 | [axon-eval](https://github.com/benaskins/axon-eval) | Evaluation framework for running scenario plans against a live service cluster |
+
+**Applications**
+
+| App | Description |
+|-----|-------------|
+| [imago](https://github.com/benaskins/imago) | Interactive interview CLI for structured blog post generation |
+| [revue](https://github.com/benaskins/revue) | Code review agent |
+| [vita](https://github.com/benaskins/vita) | Personal knowledge base |
 
 ## How they fit together
 
@@ -69,33 +95,48 @@ lamina (at rest)                    aurelia (in flight)
               axon (building material)
 
 Toolkit:
-  axon         ─── server lifecycle, auth, SSE, metrics
+  axon         --- server lifecycle, auth, SSE, metrics
 
 Primitives:
-  axon-tool    ─── tool definitions for LLM agents
-  axon-loop    ─── conversation loop (depends on axon-tool)
-  axon-talk    ─── LLM provider adapters (depends on axon-loop)
-  axon-wire    ─── HTTP proxy transport (no dependencies)
-  axon-fact    ─── event sourcing primitives (no dependencies)
-  axon-mind    ─── embedded Prolog engine (no dependencies)
-  axon-nats    ─── NATS adapters (depends on axon)
-  axon-lens    ─── image pipeline (depends on axon-tool)
+  axon-tool    --- tool definitions for LLM agents
+  axon-loop    --- conversation loop (axon-tool)
+  axon-talk    --- LLM provider adapters (axon-tape, axon-tool)
+  axon-tape    --- buffered token stream filter
+  axon-base    --- PostgreSQL foundation (pgx, goose)
+  axon-fact    --- event sourcing primitives
+  axon-rule    --- business rules + state machine
+  axon-sign    --- cryptographic signing (golang.org/x/crypto)
+  axon-mind    --- embedded Prolog engine
+  axon-wire    --- HTTP proxy transport
+  axon-nats    --- NATS adapters (axon)
+  axon-push    --- push notification primitives
 
-Domain packages (handlers, stores, types — no main of their own):
-  axon-auth    ─── authentication (axon)
-  axon-chat    ─── chat + agents (axon, axon-loop, axon-tool, axon-fact)
-  axon-gate    ─── deploy approval gate (axon)
-  axon-look    ─── analytics (axon)
-  axon-memo    ─── long-term memory (axon)
-  axon-task    ─── task runner (axon)
-  axon-synd    ─── syndication engine (axon, axon-fact, axon-gate)
+Agent infrastructure:
+  axon-hand    --- agent chassis (axon-talk)
+  axon-code    --- coding agent (axon-loop, axon-tool)
+  axon-snip    --- code assembly (axon-loop, axon-talk, axon-tool)
+  axon-scan    --- quality pipeline (axon-loop, axon-tool)
+  axon-cost    --- cost tracking (axon-talk, axon-fact)
+  axon-lore    --- ADR generation (axon-snip)
+
+Domain packages (handlers, stores, types; no main of their own):
+  axon-auth    --- authentication (axon)
+  axon-book    --- double-entry bookkeeping (axon, axon-fact)
+  axon-chat    --- chat + agents (axon, axon-loop, axon-tool, axon-fact)
+  axon-face    --- TUI components (axon-loop, axon-talk, axon-tool)
+  axon-gate    --- deploy approval gate (axon)
+  axon-lens    --- image pipeline (axon-tool)
+  axon-look    --- analytics (axon)
+  axon-memo    --- long-term memory (axon)
+  axon-synd    --- syndication engine (axon, axon-fact, axon-gate)
+  axon-task    --- task runner (axon)
 
 Standalone tools:
-  aurelia      ─── process supervisor
-  axon-eval    ─── evaluation framework
+  aurelia      --- process supervisor
+  axon-eval    --- evaluation framework
 ```
 
-None of the domain packages are services on their own — they're Lego bricks. A service is assembled in a composition root (a `main.go` that picks which bricks to snap together, wires them up, and starts listening). The `examples/` directory shows what this looks like in practice.
+None of the domain packages are services on their own. They're Lego bricks. A service is assembled in a composition root (a `main.go` that picks which bricks to snap together, wires them up, and starts listening). The `apps/` directory shows what this looks like in practice.
 
 Lamina manages all of this as source. Aurelia runs it.
 
@@ -104,7 +145,7 @@ Lamina manages all of this as source. Aurelia runs it.
 ```bash
 git clone https://github.com/benaskins/lamina-mono.git lamina
 cd lamina
-go install ./cmd/lamina/
+just install
 lamina init
 ```
 
@@ -119,7 +160,7 @@ lamina repo status     # full git status across all repos
 
 ## Lamina CLI
 
-The `lamina` command manages the workspace — checking repo status, running tests, tracking dependencies, and coordinating releases across all modules.
+The `lamina` command manages the workspace: repo status, tests, dependency tracking, and releases across all modules.
 
 ```bash
 lamina init                        # Clone all workspace repos
@@ -141,6 +182,10 @@ lamina heal                        # Fix issues found by doctor
 lamina release axon-tool v0.2.0    # Tag a module and push the tag
 lamina release --dry-run axon v1.0 # Preview what a release would do
 
+lamina catalogue                   # Show workspace module catalogue
+lamina apps build <name>           # Build a workspace application
+lamina apps install <name>         # Build + install to ~/.local/bin
+
 lamina eval plans/smoke.yaml       # Run an evaluation plan against the cluster
 lamina skills                      # List embedded Claude Code skills
 ```
@@ -159,31 +204,7 @@ Requires Go 1.26+.
 
 ## Slop guard
 
-Every repo is checked by [slop-guard](https://github.com/benaskins/dotfiles/blob/master/scripts/slop-guard) — a bash script that catches AI-generated filler words and comment patterns in source files. It runs as a pre-commit hook and as a Claude Code post-tool-use hook.
-
-Last full scan: **2026-03-06** — 0 issues across all repos.
-
-| Repo | Status |
-|------|--------|
-| lamina | clean |
-| aurelia | clean |
-| axon | clean |
-| axon-auth | clean |
-| axon-chat | clean |
-| axon-eval | clean |
-| axon-gate | clean |
-| axon-lens | clean |
-| axon-look | clean |
-| axon-loop | clean |
-| axon-memo | clean |
-| axon-talk | clean |
-| axon-fact | clean |
-| axon-mind | clean |
-| axon-nats | clean |
-| axon-synd | clean |
-| axon-task | clean |
-| axon-tool | clean |
-| axon-wire | clean |
+Every repo is checked by [slop-guard](https://github.com/benaskins/dotfiles/blob/master/scripts/slop-guard), a bash script that catches AI-generated filler words and comment patterns in source files. It runs as a pre-commit hook and as a Claude Code post-tool-use hook.
 
 ## A note on how this was built
 
