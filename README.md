@@ -140,23 +140,105 @@ None of the domain packages are services on their own. They're Lego bricks. A se
 
 Lamina manages all of this as source. Aurelia runs it.
 
+## Why lamina
+
+Lamina is for building autonomous, LLM-backed agents on your own hardware. If you want to run a personal compute cluster on a Mac, where agents can reason about their own uptime, manage the services they depend on, and operate without phoning home, this is the stack for it.
+
+**What you get:**
+
+- A workspace of small, composable Go libraries (axon) that an AI coding agent can reason about independently. Each module does one thing: conversation loops, tool execution, event sourcing, cost tracking, memory, syndication. You assemble services by snapping them together in a `main.go`.
+- A process supervisor (aurelia) purpose-built for mixed native + container stacks on macOS. It handles dependency ordering, health checks, automatic restarts, and secrets injection — things you'd otherwise cobble together from launchd, Docker Compose, and shell scripts.
+- A workspace manager (lamina) that coordinates across 30+ repos: dependency graphs, cross-module testing, release tagging, and health checks that catch version drift before it breaks things.
+
+**What it is not:**
+
+- A cloud deployment platform. Lamina targets a single machine (macOS, Apple Silicon). There is no clustering, auto-scaling, or multi-tenant isolation.
+- A production-grade system. The ACL and security model is minimal. This is for personal experimentation and research.
+- A framework you import. Lamina is a workspace tool. Axon modules are the libraries you import. Aurelia is the supervisor you run. They're independent layers with hard dependency boundaries.
+- A GUI application. Everything is CLI-first, designed to be operated from the terminal with tools like [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+
 ## Getting started
+
+### Prerequisites
+
+- **Go 1.26+** — all modules target Go 1.26.1
+- **just** — task runner, used by lamina and aurelia ([install](https://github.com/casey/just#installation))
+- **git** — each sub-repo is an independent git repository
+- **OrbStack** or **Docker** (optional) — required for containerised services (Postgres, Grafana, Traefik, etc.) and aurelia integration tests
+
+### Setup
 
 ```bash
 git clone https://github.com/benaskins/lamina-mono.git lamina
 cd lamina
-just install
-lamina init
+just install        # Build lamina CLI → ~/.local/bin
+lamina init         # Clone all sub-repos, wire go.work, install pre-commit hooks
 ```
 
-`lamina init` clones all workspace repos into the current directory. Repos that already exist are skipped, so it's safe to run again.
+`lamina init` clones 35+ repos from `repos.yaml` into the workspace directory. Repos that already exist are skipped, so it's safe to run again. For apps, it also wires local `replace` directives so you develop against workspace copies of axon modules.
 
-Once initialised, `lamina repo` shows the state of everything:
+Once initialised, check the state of everything:
 
 ```bash
-lamina repo            # summary table
-lamina repo status     # full git status across all repos
+lamina repo            # Summary table
+lamina repo status     # Full git status across all repos
+lamina doctor          # Health check: stale deps, untagged modules, missing docs
 ```
+
+### Working on an axon module
+
+Each axon module is a standalone Go package with its own git repo, cloned into the workspace root. The `go.work` file ties them together for local development — edits to one module are immediately visible to all others without publishing.
+
+```bash
+cd axon-chat           # Enter a module
+go test ./...          # Test in isolation
+go vet ./...           # Lint
+```
+
+To test across the full workspace:
+
+```bash
+lamina test            # Run go test ./... across all modules
+lamina test axon-chat  # Test a specific module
+```
+
+Each module has its own `CLAUDE.md` or `AGENTS.md` with architecture docs. Read those before making changes.
+
+### Working on an app
+
+Applications live in `apps/` and compose axon modules into runnable binaries. An app is a `main.go` that picks which modules to snap together, wires them up, and starts listening (or launches a TUI).
+
+```bash
+lamina apps build vita      # Build an app
+lamina apps install vita    # Build + install to ~/.local/bin
+```
+
+Apps use `replace` directives to point at workspace copies of axon modules, so local changes are picked up immediately.
+
+### Working with aurelia
+
+Aurelia supervises the running system — native Go binaries and Docker containers, managed through YAML service definitions in `~/.aurelia/services/`.
+
+```bash
+cd aurelia
+just build             # Build binary
+just install           # Build + install + restart daemon
+just test              # Unit tests
+just test-integration  # Integration tests (requires OrbStack)
+```
+
+Aurelia is not imported by axon services. It supervises them from the outside: starting processes in dependency order, running health checks, restarting on failure, and injecting secrets from macOS Keychain or OpenBao. The boundary between "building material" (axon) and "operations" (aurelia) is intentional and strict.
+
+### Keeping things healthy
+
+```bash
+lamina doctor          # Six health checks: repo cleanliness, broken replace directives,
+                       # untagged modules, unpublished commits, version drift, missing docs
+lamina heal            # Auto-fix: tag untagged modules, bump versions, scaffold missing docs
+lamina doctor --json | lamina heal  # Pipe doctor output into heal
+```
+
+Run `lamina doctor` regularly, especially after cross-module refactors. It catches version inconsistencies — where two services depend on different versions of the same axon module — before they surface as runtime bugs.
 
 ## Lamina CLI
 
@@ -190,9 +272,9 @@ lamina eval plans/smoke.yaml       # Run an evaluation plan against the cluster
 lamina skills                      # List embedded Claude Code skills
 ```
 
-## Install
+## Using axon modules outside the workspace
 
-Each module is a standalone Go package:
+Each module is a standalone Go package, published on GitHub under MIT:
 
 ```
 go get github.com/benaskins/axon@latest
@@ -200,7 +282,7 @@ go get github.com/benaskins/axon-loop@latest
 go get github.com/benaskins/axon-memo@latest
 ```
 
-Requires Go 1.26+.
+Requires Go 1.26+. You don't need lamina or aurelia to use individual axon modules in your own projects.
 
 ## Slop guard
 
