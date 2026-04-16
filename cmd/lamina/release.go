@@ -11,8 +11,6 @@ import (
 
 	loop "github.com/benaskins/axon-loop"
 	talk "github.com/benaskins/axon-talk"
-	"github.com/benaskins/axon-talk/anthropic"
-	"github.com/benaskins/axon-talk/openai"
 	"github.com/benaskins/lamina/internal/config"
 	"github.com/benaskins/lamina/internal/docreview"
 	"github.com/spf13/cobra"
@@ -663,19 +661,6 @@ func backfillReleaseNotes(root string, dryRun bool) error {
 	return nil
 }
 
-func newLLMClient(provider, baseURL, apiKey string) (talk.LLMClient, error) {
-	switch provider {
-	case "anthropic":
-		return anthropic.NewClient("https://api.anthropic.com", apiKey), nil
-	case "openai":
-		if baseURL == "" {
-			baseURL = "https://api.openai.com"
-		}
-		return openai.NewClient(baseURL, apiKey), nil
-	default:
-		return nil, fmt.Errorf("unsupported LLM provider %q (supported: anthropic, openai)", provider)
-	}
-}
 
 func runGit(dir string, args ...string) error {
 	cmd := exec.Command("git", args...)

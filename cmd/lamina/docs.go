@@ -5,9 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	talk "github.com/benaskins/axon-talk"
-	"github.com/benaskins/axon-talk/anthropic"
-	"github.com/benaskins/axon-talk/openai"
 	"github.com/benaskins/lamina/internal/config"
 	"github.com/benaskins/lamina/internal/docreview"
 	"github.com/spf13/cobra"
@@ -69,7 +66,7 @@ func runDocsReview(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	llm, err := newDocsLLMClient(cfg.LLM.Provider, cfg.LLM.BaseURL, apiKey)
+	llm, err := newLLMClient(cfg.LLM.Provider, cfg.LLM.BaseURL, apiKey)
 	if err != nil {
 		return err
 	}
@@ -151,16 +148,3 @@ func runDocsReview(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func newDocsLLMClient(provider, baseURL, apiKey string) (talk.LLMClient, error) {
-	switch provider {
-	case "anthropic":
-		return anthropic.NewClient("https://api.anthropic.com", apiKey), nil
-	case "openai":
-		if baseURL == "" {
-			baseURL = "https://api.openai.com"
-		}
-		return openai.NewClient(baseURL, apiKey), nil
-	default:
-		return nil, fmt.Errorf("unsupported LLM provider %q (supported: anthropic, openai)", provider)
-	}
-}
