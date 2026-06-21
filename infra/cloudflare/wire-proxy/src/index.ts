@@ -20,7 +20,7 @@ export default {
     }
 
     const token = request.headers.get("X-Wire-Token");
-    if (!token || token !== env.WIRE_TOKEN) {
+    if (!token || !timingSafeEqual(token, env.WIRE_TOKEN)) {
       return Response.json({ error: "unauthorized" }, { status: 401 });
     }
 
@@ -33,6 +33,18 @@ export default {
     return Response.json({ error: "not found" }, { status: 404 });
   },
 };
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const encoder = new TextEncoder();
+  const ab = encoder.encode(a);
+  const bb = encoder.encode(b);
+  if (ab.byteLength !== bb.byteLength) {
+    // Compare against self to burn constant time, then return false.
+    crypto.subtle.timingSafeEqual(ab, ab);
+    return false;
+  }
+  return crypto.subtle.timingSafeEqual(ab, bb);
+}
 
 async function handleProxy(request: Request): Promise<Response> {
   let req: ProxyRequest;

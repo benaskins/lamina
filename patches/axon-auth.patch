@@ -1,0 +1,58 @@
+diff --git a/handler_login.go b/handler_login.go
+index 009ce03..384168b 100644
+--- a/handler_login.go
++++ b/handler_login.go
+@@ -131,7 +131,7 @@ func (s *Server) handleLoginFinish(w http.ResponseWriter, r *http.Request) {
+ 	user, err := s.userStore.GetUserByID(ctx, userIDCookie.Value)
+ 	if err != nil {
+ 		slog.Error("login finish: user not found", "error", err, "user_id", userIDCookie.Value)
+-		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "user not found"})
++		axon.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+ 		return
+ 	}
+ 
+diff --git a/handler_logout.go b/handler_logout.go
+index 4291c00..7be4905 100644
+--- a/handler_logout.go
++++ b/handler_logout.go
+@@ -1,6 +1,7 @@
+ package auth
+ 
+ import (
++	"log/slog"
+ 	"net/http"
+ 
+ 	"github.com/benaskins/axon"
+@@ -14,7 +15,9 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+ 	}
+ 
+ 	tokenHash := HashToken(cookie.Value)
+-	s.sessionStore.DeleteSessionByHash(r.Context(), tokenHash)
++	if err := s.sessionStore.DeleteSessionByHash(r.Context(), tokenHash); err != nil {
++		slog.Error("logout: failed to delete session", "error", err)
++	}
+ 	http.SetCookie(w, &http.Cookie{
+ 		Name:     "session",
+ 		Value:    "",
+diff --git a/handler_service_user.go b/handler_service_user.go
+index 2295449..87aba28 100644
+--- a/handler_service_user.go
++++ b/handler_service_user.go
+@@ -1,6 +1,7 @@
+ package auth
+ 
+ import (
++	"crypto/subtle"
+ 	"encoding/json"
+ 	"errors"
+ 	"log/slog"
+@@ -30,7 +31,8 @@ type serviceUserHandler struct {
+ func (h *serviceUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 	// Require a valid internal API key
+ 	apiKey := r.Header.Get("X-Internal-API-Key")
+-	if h.internalAPIKey == "" || apiKey != h.internalAPIKey {
++	if h.internalAPIKey == "" ||
++		subtle.ConstantTimeCompare([]byte(apiKey), []byte(h.internalAPIKey)) != 1 {
+ 		axon.WriteError(w, http.StatusUnauthorized, "unauthorized")
+ 		return
+ 	}

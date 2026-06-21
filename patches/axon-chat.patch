@@ -1,0 +1,122 @@
+diff --git a/config.go b/config.go
+index d9bbd8c..c990ba1 100644
+--- a/config.go
++++ b/config.go
+@@ -5,4 +5,9 @@ type Config struct {
+ 	DefaultModel string
+ 	CookieDomain string
+ 	AuthLoginURL string
++
++	// InternalAPIKey is required for service-to-service endpoints
++	// (InternalMessagesHandler, InternalAgentHandler). Requests must
++	// present this value in the X-Internal-API-Key header.
++	InternalAPIKey string
+ }
+diff --git a/handler_internal.go b/handler_internal.go
+index 2b72ac1..dbc8087 100644
+--- a/handler_internal.go
++++ b/handler_internal.go
+@@ -1,19 +1,42 @@
+ package chat
+ 
+ import (
++	"crypto/subtle"
+ 	"errors"
++	"log/slog"
+ 	"net/http"
+ 
+ 	"github.com/benaskins/axon"
+ )
+ 
+-// internalMessagesHandler serves conversation messages without auth for
++// requireInternalKey validates the X-Internal-API-Key header using
++// constant-time comparison. Returns true if the request is authorised.
++func requireInternalKey(w http.ResponseWriter, r *http.Request, key string) bool {
++	if key == "" {
++		axon.WriteError(w, http.StatusUnauthorized, "unauthorized")
++		return false
++	}
++	provided := r.Header.Get("X-Internal-API-Key")
++	if subtle.ConstantTimeCompare([]byte(provided), []byte(key)) != 1 {
++		axon.WriteError(w, http.StatusUnauthorized, "unauthorized")
++		return false
++	}
++	return true
++}
++
++// internalMessagesHandler serves conversation messages for
+ // internal service-to-service calls (e.g. memory service).
++// Requires a valid X-Internal-API-Key header.
+ type internalMessagesHandler struct {
+-	store Store
++	store       Store
++	internalKey string
+ }
+ 
+ func (h *internalMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
++	if !requireInternalKey(w, r, h.internalKey) {
++		return
++	}
++
+ 	conversationID := r.PathValue("id")
+ 	if conversationID == "" {
+ 		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "missing conversation id"})
+@@ -22,17 +45,20 @@ func (h *internalMessagesHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
+ 
+ 	messages, err := h.store.GetMessages(r.Context(), conversationID)
+ 	if err != nil {
+-		axon.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
++		slog.Error("internal messages: failed to get messages", "error", err, "conversation_id", conversationID)
++		axon.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get messages"})
+ 		return
+ 	}
+ 
+ 	axon.WriteJSON(w, http.StatusOK, messages)
+ }
+ 
+-// internalAgentHandler serves agent info by slug without auth for
++// internalAgentHandler serves agent info by slug for
+ // internal service-to-service calls.
++// Requires a valid X-Internal-API-Key header.
+ type internalAgentHandler struct {
+-	store Store
++	store       Store
++	internalKey string
+ }
+ 
+ // internalAgentResponse is the JSON shape returned by the internal agent endpoint.
+@@ -42,6 +68,10 @@ type internalAgentResponse struct {
+ }
+ 
+ func (h *internalAgentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
++	if !requireInternalKey(w, r, h.internalKey) {
++		return
++	}
++
+ 	slug := r.PathValue("slug")
+ 	if slug == "" {
+ 		axon.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "missing agent slug"})
+diff --git a/server.go b/server.go
+index 57f0f20..7feb8cb 100644
+--- a/server.go
++++ b/server.go
+@@ -198,15 +198,15 @@ func (s *Server) UserCreatedHandler() http.Handler {
+ }
+ 
+ // InternalMessagesHandler returns an http.Handler for fetching conversation messages
+-// without auth, for internal service-to-service calls.
++// with internal API key auth, for service-to-service calls.
+ func (s *Server) InternalMessagesHandler() http.Handler {
+-	return &internalMessagesHandler{store: s.chat.store}
++	return &internalMessagesHandler{store: s.chat.store, internalKey: s.config.InternalAPIKey}
+ }
+ 
+ // InternalAgentHandler returns an http.Handler for fetching agent info by slug
+-// without auth, for internal service-to-service calls.
++// with internal API key auth, for service-to-service calls.
+ func (s *Server) InternalAgentHandler() http.Handler {
+-	return &internalAgentHandler{store: s.chat.store}
++	return &internalAgentHandler{store: s.chat.store, internalKey: s.config.InternalAPIKey}
+ }
+ 
+ // WaitForBackgroundTasks blocks until all background tasks complete.
